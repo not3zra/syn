@@ -1,0 +1,107 @@
+tools:
+  send_payment:
+    severity_rules:
+      - max_amount: 1000
+        score: 20
+      - max_amount: 5000
+        score: 50
+      - max_amount: 50000
+        score: 80
+      - max_amount: null
+        score: 95
+    data_sensitivity_rules:
+      - field: recipient
+        pattern: "external"
+        score: 40
+      - field: currency
+        pattern: ".*"
+        score: 0
+    tool_trust_tier: "official"
+    anomaly_lookback: 20
+    policy_rules:
+      - description: "No payments above $5,000 to external recipients without approval"
+        condition:
+          field: amount
+          operator: ">"
+          value: 5000
+        score: 100
+
+  delete_file:
+    severity_rules:
+      - path_pattern: "/etc/"
+        score: 95
+      - path_pattern: "/data/prod/"
+        score: 90
+      - path_pattern: ".*"
+        score: 60
+    data_sensitivity_rules:
+      - field: file_path
+        pattern: "(customer|users|accounts)"
+        score: 80
+      - field: file_path
+        pattern: ".*"
+        score: 10
+    tool_trust_tier: "verified"
+    anomaly_lookback: 10
+    policy_rules: []
+
+  query_database:
+    severity_rules:
+      - query_type: "ddl"
+        score: 90
+      - query_type: "dml"
+        score: 40
+      - query_type: "select"
+        score: 10
+      - query_type: null
+        score: 30
+    data_sensitivity_rules:
+      - field: query
+        pattern: "(DROP|ALTER|TRUNCATE|DELETE|INSERT|UPDATE)"
+        score: 100
+      - field: query
+        pattern: "(users|customers|accounts|pii|ssn)"
+        score: 70
+      - field: query
+        pattern: ".*"
+        score: 10
+    tool_trust_tier: "official"
+    anomaly_lookback: 20
+    policy_rules:
+      - description: "No destructive DDL operations"
+        condition:
+          field: query
+          operator: "matches"
+          value: "^(DROP|ALTER|TRUNCATE|DELETE|INSERT|UPDATE)"
+        score: 100
+
+  check_balance:
+    severity_rules:
+      - max_amount: null
+        score: 15
+    data_sensitivity_rules:
+      - field: account_id
+        pattern: ".*"
+        score: 20
+    tool_trust_tier: "official"
+    anomaly_lookback: 30
+    policy_rules: []
+
+thresholds:
+  weighted_score:
+    approve_max: 30.0
+    escalate_min: 30.0
+    escalate_max: 55.0
+    block_min: 55.0
+
+decision_tree:
+  severity_floor: 90.0
+  confidence_floor: 40.0
+
+weights:
+  severity: 0.30
+  policy: 0.20
+  anomaly: 0.10
+  data_sensitivity: 0.15
+  confidence: 0.05
+  tool_trust: 0.20

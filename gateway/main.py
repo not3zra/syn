@@ -1,8 +1,13 @@
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
+import yaml
 from fastapi import FastAPI
 from pydantic import BaseModel
+
+from engine.evaluate import evaluate as risk_evaluate
+from engine.models import Decision
 
 REGISTERED_TOOLS: dict[str, dict[str, Any]] = {
     "send_payment": {
@@ -26,6 +31,9 @@ REGISTERED_TOOLS: dict[str, dict[str, Any]] = {
         },
     },
 }
+
+config_path = Path(__file__).resolve().parent.parent / "engine" / "policy_config.yaml"
+POLICY_CONFIG = yaml.safe_load(config_path.read_text())
 
 app = FastAPI(title="syn-gateway")
 
@@ -66,24 +74,20 @@ def list_tools():
 
 @app.post("/intercept")
 def intercept(req: ToolCallRequest) -> DecisionResponse:
+    result = risk_evaluate(
+        action_type=req.action_type,
+        parameters=req.parameters,
+        session_context={"history": [], "session_id": None},
+        config=POLICY_CONFIG,
+    )
+
     return DecisionResponse(
-        decision="approved",
-        trigger="hardcoded_fake",
-        factor_scores={
-            "severity": 0,
-            "policy": 0,
-            "anomaly": 0,
-            "data_sensitivity": 0,
-            "confidence": 100,
-            "tool_trust": 100,
-        },
-        session_data={
-            "session_id": None,
-            "cumulative_severity": 0,
-            "pattern_matched": False,
-        },
-        regulatory_tier="minimal_risk",
-        us_regime_flags=[],
+        decision=result.decision.value,
+        trigger=result.trigger,
+        factor_scores=result.factor_scores.to_dict(),
+        session_data=result.session_data.to_dict(),
+        regulatory_tier=result.regulatory_tier,
+        us_regime_flags=result.us_regime_flags,
         action_type=req.action_type,
         parameters_abstracted={
             "amount_category": "low",

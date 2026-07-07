@@ -3,6 +3,23 @@ from gateway.main import app, REGISTERED_TOOLS
 
 client = TestClient(app)
 
+VALID_DECISIONS = {"approved", "escalated", "blocked"}
+FACTOR_KEYS = {"severity", "policy", "anomaly", "data_sensitivity", "confidence", "tool_trust"}
+SESSION_KEYS = {"session_id", "cumulative_severity", "pattern_matched"}
+
+
+def assert_valid_decision_response(data, action_type):
+    assert data["decision"] in VALID_DECISIONS
+    assert isinstance(data["trigger"], str) and len(data["trigger"]) > 0
+    assert set(data["factor_scores"].keys()) == FACTOR_KEYS
+    assert all(0 <= v <= 100 for v in data["factor_scores"].values())
+    assert set(data["session_data"].keys()) == SESSION_KEYS
+    assert isinstance(data["regulatory_tier"], str)
+    assert isinstance(data["us_regime_flags"], list)
+    assert data["action_type"] == action_type
+    assert isinstance(data["parameters_abstracted"], dict)
+    assert "timestamp" in data
+
 
 def test_lists_registered_tools():
     response = client.get("/tools")
@@ -21,39 +38,6 @@ def test_health_returns_ok():
     assert response.json() == {"status": "ok"}
 
 
-DECISION_SHAPE = {
-    "decision": "approved",
-    "trigger": "hardcoded_fake",
-    "factor_scores": {
-        "severity": 0,
-        "policy": 0,
-        "anomaly": 0,
-        "data_sensitivity": 0,
-        "confidence": 100,
-        "tool_trust": 100,
-    },
-    "session_data": {
-        "session_id": None,
-        "cumulative_severity": 0,
-        "pattern_matched": False,
-    },
-    "regulatory_tier": "minimal_risk",
-    "us_regime_flags": [],
-}
-
-
-def assert_valid_decision(data, action_type):
-    assert data["decision"] == DECISION_SHAPE["decision"]
-    assert data["trigger"] == DECISION_SHAPE["trigger"]
-    assert data["factor_scores"] == DECISION_SHAPE["factor_scores"]
-    assert data["session_data"] == DECISION_SHAPE["session_data"]
-    assert data["regulatory_tier"] == DECISION_SHAPE["regulatory_tier"]
-    assert data["us_regime_flags"] == DECISION_SHAPE["us_regime_flags"]
-    assert data["action_type"] == action_type
-    assert "parameters_abstracted" in data
-    assert "timestamp" in data
-
-
 def test_intercept_send_payment():
     payload = {
         "action_type": "send_payment",
@@ -61,7 +45,7 @@ def test_intercept_send_payment():
     }
     response = client.post("/intercept", json=payload)
     assert response.status_code == 200
-    assert_valid_decision(response.json(), "send_payment")
+    assert_valid_decision_response(response.json(), "send_payment")
 
 
 def test_intercept_delete_file():
@@ -71,7 +55,7 @@ def test_intercept_delete_file():
     }
     response = client.post("/intercept", json=payload)
     assert response.status_code == 200
-    assert_valid_decision(response.json(), "delete_file")
+    assert_valid_decision_response(response.json(), "delete_file")
 
 
 def test_intercept_query_database():
@@ -81,7 +65,4 @@ def test_intercept_query_database():
     }
     response = client.post("/intercept", json=payload)
     assert response.status_code == 200
-    assert_valid_decision(response.json(), "query_database")
-
-
-
+    assert_valid_decision_response(response.json(), "query_database")
