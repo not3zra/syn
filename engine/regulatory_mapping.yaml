@@ -1,0 +1,35 @@
+# EU AI Act Article 5 prohibited practices (exhaustive — never add inferred categories)
+article_5_prohibited_practices:
+  - social_scoring
+  - real_time_biometric_categorization
+  - subliminal_manipulation
+  - exploitation_of_vulnerabilities
+
+# Action types that trigger High Risk under Article 6
+high_risk_action_types:
+  - biometric_identification
+  - critical_infrastructure_management
+  - employment_decisions
+  - credit_scoring
+  - law_enforcement
+  - migration_asylum
+  - access_to_essential_services
+
+# Action types that trigger Limited Risk under Article 52
+limited_risk_action_types:
+  - chatbot
+  - emotion_recognition
+  - deepfake_generation
+  - biometric_categorization
+
+# US financial regimes
+us_financial_action_types:
+  - send_payment
+  - update_account
+  - trade_execution
+  - payment_processing
+
+# High Risk thresholds
+high_risk:
+  min_severity_for_unknown_tool: 70
+  min_data_sensitivity: 90

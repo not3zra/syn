@@ -10,6 +10,7 @@ from engine.data_sensitivity import score_data_sensitivity
 from engine.confidence import score_confidence
 from engine.tool_trust import score_tool_trust
 from engine.session import score_session
+from engine.regulatory import map_regulatory_tier, map_us_regime_flags
 from engine.decision_tree import (
     apply_decision_tree,
     apply_session_branches,
@@ -54,6 +55,9 @@ def evaluate(
         tool_trust=tool_trust,
     )
 
+    regulatory_tier = map_regulatory_tier(action_type, factor_scores, config)
+    us_regime_flags = map_us_regime_flags(action_type, config)
+
     session_info = score_session(history, action_type, sequences_config, threshold=session_threshold)
     session_data = SessionData(
         session_id=ctx.get("session_id"),
@@ -68,6 +72,8 @@ def evaluate(
             trigger=session_trigger or "session:escalated",
             factor_scores=factor_scores,
             session_data=session_data,
+            regulatory_tier=regulatory_tier,
+            us_regime_flags=us_regime_flags,
         )
 
     floor_decision, floor_trigger = apply_decision_tree(factor_scores, config)
@@ -78,6 +84,8 @@ def evaluate(
             trigger=floor_trigger or "decision_tree:floor",
             factor_scores=factor_scores,
             session_data=session_data,
+            regulatory_tier=regulatory_tier,
+            us_regime_flags=us_regime_flags,
         )
 
     weighted_score = compute_weighted_score(factor_scores, config)
@@ -90,4 +98,6 @@ def evaluate(
         trigger=trigger,
         factor_scores=factor_scores,
         session_data=session_data,
+        regulatory_tier=regulatory_tier,
+        us_regime_flags=us_regime_flags,
     )

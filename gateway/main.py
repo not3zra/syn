@@ -35,6 +35,11 @@ REGISTERED_TOOLS: dict[str, dict[str, Any]] = {
 config_path = Path(__file__).resolve().parent.parent / "engine" / "policy_config.yaml"
 POLICY_CONFIG = yaml.safe_load(config_path.read_text())
 
+reg_path = Path(__file__).resolve().parent.parent / "engine" / "regulatory_mapping.yaml"
+REG_CONFIG = yaml.safe_load(reg_path.read_text())
+
+FULL_CONFIG = {**POLICY_CONFIG, "regulatory_mapping": REG_CONFIG}
+
 app = FastAPI(title="syn-gateway")
 
 
@@ -78,7 +83,7 @@ def intercept(req: ToolCallRequest) -> DecisionResponse:
         action_type=req.action_type,
         parameters=req.parameters,
         session_context={"history": [], "session_id": None},
-        config=POLICY_CONFIG,
+        config=FULL_CONFIG,
     )
 
     return DecisionResponse(
