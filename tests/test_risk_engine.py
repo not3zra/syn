@@ -111,3 +111,48 @@ def test_approve_check_balance():
         config=CONFIG,
     )
     assert result.decision == Decision.APPROVED
+
+
+def test_session_escalates_on_pattern_match():
+    history = [
+        {"action_type": "check_balance", "parameters": {"account_id": "acc_123"}, "severity": 15},
+    ]
+    result = evaluate(
+        action_type="send_payment",
+        parameters={"amount": 50, "currency": "USD", "recipient": "alice"},
+        session_context={"history": history, "session_id": "agent_1:1"},
+        config=CONFIG,
+    )
+    assert result.decision == Decision.ESCALATED
+    assert result.trigger == "session:pattern_matched"
+    assert result.session_data.pattern_matched is True
+
+
+def test_session_escalates_on_cumulative_threshold():
+    history = [
+        {"action_type": "check_balance", "parameters": {"account_id": "acc_123"}, "severity": 30},
+        {"action_type": "check_balance", "parameters": {"account_id": "acc_456"}, "severity": 30},
+        {"action_type": "check_balance", "parameters": {"account_id": "acc_789"}, "severity": 30},
+    ]
+    result = evaluate(
+        action_type="check_balance",
+        parameters={"amount": 50, "currency": "USD", "recipient": "alice"},
+        session_context={"history": history, "session_id": "agent_1:1"},
+        config=CONFIG,
+    )
+    assert result.decision == Decision.ESCALATED
+    assert result.trigger == "session:cumulative_threshold"
+    assert result.session_data.cumulative_severity == 90.0
+
+
+def test_session_data_included_in_result():
+    history = [{"action_type": "check_balance", "parameters": {"account_id": "acc_123"}, "severity": 15}]
+    result = evaluate(
+        action_type="check_balance",
+        parameters={"account_id": "acc_123"},
+        session_context={"history": history, "session_id": "agent_1:2"},
+        config=CONFIG,
+    )
+    assert result.session_data.session_id == "agent_1:2"
+    assert result.session_data.cumulative_severity == 15.0
+    assert result.session_data.pattern_matched is False
