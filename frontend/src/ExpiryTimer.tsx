@@ -1,16 +1,15 @@
 import { useState, useEffect } from 'react';
 
 interface ExpiryTimerProps {
-  timestamp: string;
+  expiresAt: string;
 }
 
-export function ExpiryTimer({ timestamp }: ExpiryTimerProps) {
+export function ExpiryTimer({ expiresAt }: ExpiryTimerProps) {
   const [remaining, setRemaining] = useState('');
 
   useEffect(() => {
     function tick() {
-      const created = new Date(timestamp).getTime();
-      const expiry = created + 4 * 60 * 60 * 1000;
+      const expiry = new Date(expiresAt).getTime();
       const now = Date.now();
       const diff = expiry - now;
 
@@ -28,7 +27,7 @@ export function ExpiryTimer({ timestamp }: ExpiryTimerProps) {
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-  }, [timestamp]);
+  }, [expiresAt]);
 
   return (
     <div className="expiry-timer">

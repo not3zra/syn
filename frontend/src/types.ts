@@ -26,6 +26,8 @@ export interface DecisionResponse {
   explanation?: string;
   remediation?: string;
   simulation?: boolean;
+  rollback_plan?: string;
+  expires_at?: string;
 }
 
 export interface ToolInfo {

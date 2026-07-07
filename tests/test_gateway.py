@@ -273,6 +273,90 @@ def test_intercept_escalated_no_execution(monkeypatch):
         assert data["execution"] is None
 
 
+def test_escalation_includes_rollback_plan_and_expires_at(monkeypatch):
+    import importlib
+    import tempfile
+    from pathlib import Path
+    from fastapi.testclient import TestClient
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        monkeypatch.setenv("SYN_AUDIT_DB_PATH", str(db_path))
+        from gateway import main as gateway_main
+        importlib.reload(gateway_main)
+        test_client = TestClient(gateway_main.app)
+
+        payload = {
+            "action_type": "delete_file",
+            "parameters": {"file_path": "/tmp/customers.xlsx"},
+        }
+        resp = test_client.post("/intercept", json=payload)
+        data = resp.json()
+        assert data["decision"] == "escalated"
+        assert isinstance(data.get("rollback_plan"), str) and len(data["rollback_plan"]) > 0
+        assert isinstance(data.get("expires_at"), str) and len(data["expires_at"]) > 0
+
+
+def test_resolve_approved_calls_mark_resolved_and_execute_tool(monkeypatch):
+    import importlib
+    import tempfile
+    from pathlib import Path
+    from fastapi.testclient import TestClient
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        monkeypatch.setenv("SYN_AUDIT_DB_PATH", str(db_path))
+        from gateway import main as gateway_main
+        importlib.reload(gateway_main)
+        test_client = TestClient(gateway_main.app)
+
+        payload = {
+            "action_type": "delete_file",
+            "parameters": {"file_path": "/tmp/customers.xlsx"},
+        }
+        test_client.post("/intercept", json=payload)
+
+        resp = test_client.get("/timeline?outcome=escalated")
+        entries = resp.json()
+        assert len(entries) > 0
+        entry_id = entries[-1]["id"]
+
+        resolve_resp = test_client.post(f"/resolve/{entry_id}", json={"outcome": "approved"})
+        resolve_data = resolve_resp.json()
+        assert resolve_data["success"] is True
+        assert resolve_data["execution"]["status"] == "success"
+
+
+def test_resolve_denied_marks_resolved_only(monkeypatch):
+    import importlib
+    import tempfile
+    from pathlib import Path
+    from fastapi.testclient import TestClient
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        monkeypatch.setenv("SYN_AUDIT_DB_PATH", str(db_path))
+        from gateway import main as gateway_main
+        importlib.reload(gateway_main)
+        test_client = TestClient(gateway_main.app)
+
+        payload = {
+            "action_type": "delete_file",
+            "parameters": {"file_path": "/tmp/customers.xlsx"},
+        }
+        test_client.post("/intercept", json=payload)
+
+        resp = test_client.get("/timeline?outcome=escalated")
+        entries = resp.json()
+        assert len(entries) > 0
+        entry_id = entries[-1]["id"]
+
+        resolve_resp = test_client.post(f"/resolve/{entry_id}", json={"outcome": "denied"})
+        resolve_data = resolve_resp.json()
+        assert resolve_data["success"] is True
+        assert resolve_data["execution"] is None
+
+
 def test_intercept_blocked_no_execution(monkeypatch):
     import importlib
     import tempfile

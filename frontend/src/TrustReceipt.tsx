@@ -153,10 +153,9 @@ export function TrustReceipt({ data }: TrustReceiptProps) {
           <div className="receipt-section">
             <h3 className="section-title">Rollback Plan</h3>
             <p className="remediation-text">
-              The action has been escalated for human review. If denied, the action will not be executed.
-              Pending approvals auto-expire after 4 hours.
+              {data.rollback_plan || 'Pending human review.'}
             </p>
-            <ExpiryTimer timestamp={data.timestamp} />
+            {data.expires_at && <ExpiryTimer expiresAt={data.expires_at} />}
           </div>
         )}
       </div>

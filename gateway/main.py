@@ -1,6 +1,6 @@
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -92,6 +92,8 @@ class DecisionResponse(BaseModel):
     explanation: str | None = None
     remediation: str | None = None
     simulation: bool = False
+    rollback_plan: str | None = None
+    expires_at: str | None = None
 
 
 class BootstrapIntrospectRequest(BaseModel):
@@ -149,6 +151,28 @@ def bootstrap_approve(req: BootstrapApproveRequest):
     return {"success": True, "path": str(target)}
 
 
+class ResolveRequest(BaseModel):
+    outcome: str  # "approved" or "denied"
+
+
+@app.post("/resolve/{entry_id}")
+def resolve_escalation(entry_id: int, req: ResolveRequest):
+    AUDIT_STORE.mark_resolved(entry_id)
+    result = {"success": True, "execution": None}
+    if req.outcome == "approved":
+        entry_data = AUDIT_STORE.list_all(outcome="escalated", limit=100)
+        action_type = None
+        params = None
+        for e in entry_data:
+            if e.get("id") == entry_id:
+                action_type = e.get("action_type")
+                params = e.get("parameters")
+                break
+        if action_type:
+            result["execution"] = execute_tool(action_type or "unknown", params or {})
+    return result
+
+
 @app.get("/timeline")
 def list_timeline(outcome: str | None = Query(None)):
     return AUDIT_STORE.list_all(outcome=outcome)
@@ -156,6 +180,7 @@ def list_timeline(outcome: str | None = Query(None)):
 
 @app.post("/intercept")
 def intercept(req: ToolCallRequest) -> DecisionResponse:
+    AUDIT_STORE.expire_old()
     session_id = generate_session_id(req.agent_id, int(time.time()))
     is_simulation = req.mode == "simulation"
     now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -226,6 +251,11 @@ def intercept(req: ToolCallRequest) -> DecisionResponse:
     if not is_simulation:
         if result.decision.value == "approved":
             resp.execution = execute_tool(req.action_type, req.parameters)
+
+        if result.decision.value == "escalated":
+            expires_at = (datetime.now(timezone.utc) + timedelta(hours=4)).isoformat().replace("+00:00", "Z")
+            resp.rollback_plan = "If denied, the action will not be executed."
+            resp.expires_at = expires_at
 
         entry = resp.model_dump()
         entry["parameters"] = req.parameters
