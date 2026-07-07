@@ -37,11 +37,17 @@ def score_session(
     sequences_config: dict[str, Any],
     threshold: float = 70.0,
 ) -> dict[str, Any]:
-    pattern_matched = find_risky_sequence(history, current_action_type, sequences_config) is not None
+    matched_sequence = find_risky_sequence(history, current_action_type, sequences_config)
     cumulative_severity = compute_cumulative_severity(history)
 
-    return {
-        "pattern_matched": pattern_matched,
+    result: dict[str, Any] = {
+        "pattern_matched": matched_sequence is not None,
         "cumulative_severity": cumulative_severity,
         "threshold_exceeded": cumulative_severity > threshold,
     }
+
+    if matched_sequence:
+        pair = matched_sequence.get("pair", [])
+        result["matched_pair"] = f"{pair[0]}_{pair[1]}" if len(pair) >= 2 else "unknown"
+
+    return result

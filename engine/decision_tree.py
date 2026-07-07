@@ -27,7 +27,8 @@ def apply_session_branches(
     session_threshold = config.get("decision_tree", {}).get("session_threshold", 70)
 
     if session_info.get("pattern_matched"):
-        return Decision.ESCALATED, "session:pattern_matched"
+        pair = session_info.get("matched_pair", "unknown")
+        return Decision.ESCALATED, f"session:pattern_matched:{pair}"
 
     if session_info.get("cumulative_severity", 0) > session_threshold:
         return Decision.ESCALATED, "session:cumulative_threshold"

@@ -124,7 +124,7 @@ def test_session_escalates_on_pattern_match():
         config=CONFIG,
     )
     assert result.decision == Decision.ESCALATED
-    assert result.trigger == "session:pattern_matched"
+    assert result.trigger == "session:pattern_matched:check_balance_send_payment"
     assert result.session_data.pattern_matched is True
 
 
