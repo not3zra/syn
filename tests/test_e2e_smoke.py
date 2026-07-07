@@ -74,6 +74,8 @@ def server():
 
 
 class TestApprovePath:
+    AGENT_ID = "e2e-approve"
+
     def test_approve_path_http_response(self, server):
         base_url, db_path = server
 
@@ -83,6 +85,7 @@ class TestApprovePath:
                 json={
                     "action_type": "send_payment",
                     "parameters": {"amount": 50, "recipient": "alice"},
+                    "agent_id": self.AGENT_ID,
                 },
             )
             assert resp.status_code == 200
@@ -92,6 +95,7 @@ class TestApprovePath:
             json={
                 "action_type": "send_payment",
                 "parameters": {"amount": 50, "recipient": "alice"},
+                "agent_id": self.AGENT_ID,
             },
         )
         assert resp.status_code == 200
@@ -111,13 +115,16 @@ class TestApprovePath:
 
 
 class TestEscalatePath:
+    AGENT_ID = "e2e-escalate"
+
     def test_escalate_path_http_response(self, server):
         base_url, _ = server
         resp = httpx.post(
             f"{base_url}/intercept",
             json={
                 "action_type": "delete_file",
-                "parameters": {"file_path": "/tmp/test.txt"},
+                "parameters": {"file_path": "/tmp/customers.xlsx"},
+                "agent_id": self.AGENT_ID,
             },
         )
         assert resp.status_code == 200
@@ -136,6 +143,8 @@ class TestEscalatePath:
 
 
 class TestBlockPath:
+    AGENT_ID = "e2e-block"
+
     def test_block_path_http_response(self, server):
         base_url, _ = server
         resp = httpx.post(
@@ -143,6 +152,7 @@ class TestBlockPath:
             json={
                 "action_type": "send_payment",
                 "parameters": {"amount": 100000, "recipient": "bob"},
+                "agent_id": self.AGENT_ID,
             },
         )
         assert resp.status_code == 200

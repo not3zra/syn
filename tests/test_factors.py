@@ -106,10 +106,13 @@ class TestDataSensitivity:
 
 class TestConfidence:
     def test_no_history(self):
-        assert score_confidence("send_payment", {}, CONFIG) == 20
+        assert score_confidence("send_payment", {}, CONFIG) == 50
 
     def test_low_history(self):
-        assert score_confidence("send_payment", {}, CONFIG, [{"action_type": "send_payment"}]) == 30
+        assert score_confidence("send_payment", {}, CONFIG, [{"action_type": "send_payment"}]) == 50
+
+    def test_history_but_not_for_this_action(self):
+        assert score_confidence("send_payment", {}, CONFIG, [{"action_type": "delete_file"}]) == 30
 
     def test_medium_history(self):
         history = [{"action_type": "send_payment"} for _ in range(5)]

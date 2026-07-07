@@ -5,3 +5,7 @@ __pycache__/
 node_modules/
 frontend/dist/
 data/
+.env
+AGENTS.md
+docs/
+ralph/

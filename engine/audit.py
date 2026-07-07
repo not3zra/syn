@@ -17,10 +17,15 @@ class AuditStore:
                 entry TEXT NOT NULL,
                 decision TEXT NOT NULL,
                 action_type TEXT NOT NULL,
+                session_id TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 resolved_at TEXT DEFAULT NULL
             )
         """)
+        try:
+            self._conn.execute("ALTER TABLE decisions ADD COLUMN session_id TEXT NOT NULL DEFAULT ''")
+        except sqlite3.OperationalError:
+            pass
         self._conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_decisions_decision
             ON decisions(decision)
@@ -29,16 +34,24 @@ class AuditStore:
             CREATE INDEX IF NOT EXISTS idx_decisions_created
             ON decisions(created_at)
         """)
+        self._conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_decisions_session
+            ON decisions(session_id)
+        """)
         self._conn.commit()
 
-    def append(self, entry: dict[str, Any]) -> int:
+    def append(self, entry: dict[str, Any], session_id: str = "") -> int:
         decision = entry.get("decision", "unknown")
         action_type = entry.get("action_type", "unknown")
         created_at = entry.get("timestamp", datetime.now(timezone.utc).isoformat())
+        sid = session_id or ""
+        if not sid:
+            sd = entry.get("session_data") or {}
+            sid = sd.get("session_id") or ""
 
         cursor = self._conn.execute(
-            "INSERT INTO decisions (entry, decision, action_type, created_at) VALUES (?, ?, ?, ?)",
-            (json.dumps(entry), decision, action_type, created_at),
+            "INSERT INTO decisions (entry, decision, action_type, session_id, created_at) VALUES (?, ?, ?, ?, ?)",
+            (json.dumps(entry), decision, action_type, sid, created_at),
         )
         self._conn.commit()
         return cursor.lastrowid
@@ -102,6 +115,24 @@ class AuditStore:
             severity = entry.get("factor_scores", {}).get("severity", 0)
             history.append({
                 "action_type": action_type,
+                "parameters": params,
+                "severity": severity,
+            })
+        return history
+
+    def get_session_history(self, session_id: str, limit: int = 50) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT entry, action_type FROM decisions WHERE session_id = ? ORDER BY created_at ASC LIMIT ?",
+            (session_id, limit),
+        )
+        history: list[dict[str, Any]] = []
+        for row in rows.fetchall():
+            entry = json.loads(row["entry"])
+            at = row["action_type"]
+            params = entry.get("parameters") or entry.get("parameters_abstracted", {})
+            severity = entry.get("factor_scores", {}).get("severity", 0)
+            history.append({
+                "action_type": at,
                 "parameters": params,
                 "severity": severity,
             })

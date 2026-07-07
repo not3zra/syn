@@ -1,3 +1,5 @@
+import json
+import os
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -176,20 +178,59 @@ class MockLLMClient(LLMClient):
 
 
 class FallbackLLMClient(LLMClient):
+    def __init__(
+        self,
+        api_key: str | None = None,
+        base_url: str = "https://api.groq.com/openai/v1",
+        model: str = "llama-3.3-70b-versatile",
+    ):
+        self.api_key = api_key or os.environ.get("GROQ_API_KEY") or os.environ.get("OPENAI_API_KEY")
+        self.base_url = base_url
+        self.model = model
+        self._client = None
+
+    def _ensure_client(self):
+        if self._client is not None:
+            return
+        if not self.api_key:
+            raise ValueError("GROQ_API_KEY or OPENAI_API_KEY is required")
+        from openai import OpenAI
+        self._client = OpenAI(api_key=self.api_key, base_url=self.base_url)
+
     def generate(
         self,
         prompt: str,
         output_schema: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        return {
-            "explanation": (
-                "This action was evaluated by the deterministic governance engine. "
-                "An AI-powered explanation is not available with the current configuration."
-            ),
-            "remediation": (
-                "Contact your system administrator for assistance with this action."
-            ),
-        }
+        self._ensure_client()
+        response = self._client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a security governance assistant. "
+                        "Respond with valid JSON using keys 'explanation' and 'remediation'."
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.3,
+            max_tokens=300,
+        )
+        text = response.choices[0].message.content or "{}"
+        try:
+            result = json.loads(text)
+            return {
+                "explanation": result.get("explanation", ""),
+                "remediation": result.get("remediation", ""),
+            }
+        except json.JSONDecodeError:
+            return {
+                "explanation": text,
+                "remediation": "Contact your administrator for assistance.",
+            }
 
 
 def create_llm_client(config: dict[str, Any]) -> LLMClient:
@@ -198,7 +239,11 @@ def create_llm_client(config: dict[str, Any]) -> LLMClient:
     if provider == "mock":
         return MockLLMClient()
     if provider == "fallback":
-        return FallbackLLMClient()
+        return FallbackLLMClient(
+            api_key=config.get("api_key"),
+            base_url=config.get("base_url", "https://api.groq.com/openai/v1"),
+            model=config.get("model", "llama-3.3-70b-versatile"),
+        )
 
     raise ValueError(f"Unknown LLM provider: {provider}")
 

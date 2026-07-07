@@ -1,1 +1,6 @@
-provider: mock
+provider: fallback
+
+# Switch to fallback for real LLM explanations (requires GROQ_API_KEY env var):
+# provider: fallback
+# model: llama-3.3-70b-versatile
+# base_url: https://api.groq.com/openai/v1

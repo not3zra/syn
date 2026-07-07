@@ -1,4 +1,5 @@
 import os
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,7 @@ from engine.evaluate import evaluate as risk_evaluate
 from engine.llm import create_llm_client, build_explanation_prompt
 from engine.audit import AuditStore
 from engine.slack import SlackNotifier
+from engine.session import generate_session_id
 from engine.bootstrap import (
     introspect_tools,
     generate_rules,
@@ -71,6 +73,7 @@ app = FastAPI(title="syn-gateway")
 class ToolCallRequest(BaseModel):
     action_type: str
     parameters: dict
+    agent_id: str = "default"
     mode: str = "live"
 
 
@@ -151,9 +154,12 @@ def list_timeline(outcome: str | None = Query(None)):
 
 @app.post("/intercept")
 def intercept(req: ToolCallRequest) -> DecisionResponse:
+    session_id = generate_session_id(req.agent_id, int(time.time()))
+    is_simulation = req.mode == "simulation"
+    now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
     known_tools = POLICY_CONFIG.get("tools", {})
     if req.action_type not in known_tools:
-        is_simulation = req.mode == "simulation"
         resp = DecisionResponse(
             decision="blocked",
             trigger="gateway:unknown_tool",
@@ -166,7 +172,7 @@ def intercept(req: ToolCallRequest) -> DecisionResponse:
                 "tool_trust": 0,
             },
             session_data={
-                "session_id": None,
+                "session_id": session_id,
                 "cumulative_severity": 0,
                 "pattern_matched": False,
             },
@@ -174,18 +180,18 @@ def intercept(req: ToolCallRequest) -> DecisionResponse:
             us_regime_flags=[],
             action_type=req.action_type,
             parameters_abstracted={},
-            timestamp=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            timestamp=now_iso,
             simulation=is_simulation,
         )
         if not is_simulation:
-            AUDIT_STORE.append(resp.model_dump())
+            AUDIT_STORE.append(resp.model_dump(), session_id=session_id)
         return resp
 
-    history = AUDIT_STORE.get_history(req.action_type)
+    session_history = AUDIT_STORE.get_session_history(session_id)
     result = risk_evaluate(
         action_type=req.action_type,
         parameters=req.parameters,
-        session_context={"history": history, "session_id": None},
+        session_context={"history": session_history, "session_id": session_id},
         config=FULL_CONFIG,
     )
 
@@ -196,8 +202,6 @@ def intercept(req: ToolCallRequest) -> DecisionResponse:
         factor_scores=result.factor_scores.to_dict(),
     )
     llm_output = LLM_CLIENT.generate(prompt)
-
-    is_simulation = req.mode == "simulation"
 
     resp = DecisionResponse(
         decision=result.decision.value,
@@ -211,7 +215,7 @@ def intercept(req: ToolCallRequest) -> DecisionResponse:
             "amount_category": "low",
             "recipient_type": "internal",
         },
-        timestamp=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        timestamp=now_iso,
         explanation=llm_output.get("explanation"),
         remediation=llm_output.get("remediation"),
         simulation=is_simulation,
@@ -220,7 +224,7 @@ def intercept(req: ToolCallRequest) -> DecisionResponse:
     if not is_simulation:
         entry = resp.model_dump()
         entry["parameters"] = req.parameters
-        AUDIT_STORE.append(entry)
+        AUDIT_STORE.append(entry, session_id=session_id)
 
         if result.decision.value == "escalated":
             SLACK_NOTIFIER.send_escalation(resp.model_dump())

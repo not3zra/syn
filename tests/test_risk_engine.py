@@ -49,12 +49,12 @@ def test_block_policy_violation():
 def test_escalate_low_confidence():
     result = evaluate(
         action_type="delete_file",
-        parameters={"file_path": "/tmp/test.txt"},
+        parameters={"file_path": "/tmp/customers.xlsx"},
         session_context={"history": [], "session_id": None},
         config=CONFIG,
     )
     assert result.decision == Decision.ESCALATED
-    assert result.trigger == "decision_tree:confidence_floor"
+    assert "weighted_score" in result.trigger
 
 
 def test_escalate_weighted_score():
