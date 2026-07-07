@@ -3,11 +3,13 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from pydantic import BaseModel
 
 from engine.evaluate import evaluate as risk_evaluate
 from engine.llm import create_llm_client, build_explanation_prompt
+from engine.audit import AuditStore
+from engine.slack import SlackNotifier
 
 REGISTERED_TOOLS: dict[str, dict[str, Any]] = {
     "send_payment": {
@@ -43,6 +45,13 @@ FULL_CONFIG = {**POLICY_CONFIG, "regulatory_mapping": REG_CONFIG}
 llm_config_path = Path(__file__).resolve().parent.parent / "engine" / "llm_config.yaml"
 LLM_CONFIG = yaml.safe_load(llm_config_path.read_text())
 LLM_CLIENT = create_llm_client(LLM_CONFIG)
+
+audit_db_path = Path(__file__).resolve().parent.parent / "data" / "audit.db"
+audit_db_path.parent.mkdir(parents=True, exist_ok=True)
+AUDIT_STORE = AuditStore(str(audit_db_path))
+
+SLACK_WEBHOOK_URL = None
+SLACK_NOTIFIER = SlackNotifier(webhook_url=SLACK_WEBHOOK_URL)
 
 app = FastAPI(title="syn-gateway")
 
@@ -83,11 +92,16 @@ def list_tools():
     ]
 
 
+@app.get("/timeline")
+def list_timeline(outcome: str | None = Query(None)):
+    return AUDIT_STORE.list_all(outcome=outcome)
+
+
 @app.post("/intercept")
 def intercept(req: ToolCallRequest) -> DecisionResponse:
     known_tools = POLICY_CONFIG.get("tools", {})
     if req.action_type not in known_tools:
-        return DecisionResponse(
+        resp = DecisionResponse(
             decision="blocked",
             trigger="gateway:unknown_tool",
             factor_scores={
@@ -109,6 +123,8 @@ def intercept(req: ToolCallRequest) -> DecisionResponse:
             parameters_abstracted={},
             timestamp=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         )
+        AUDIT_STORE.append(resp.model_dump())
+        return resp
 
     result = risk_evaluate(
         action_type=req.action_type,
@@ -125,7 +141,7 @@ def intercept(req: ToolCallRequest) -> DecisionResponse:
     )
     llm_output = LLM_CLIENT.generate(prompt)
 
-    return DecisionResponse(
+    resp = DecisionResponse(
         decision=result.decision.value,
         trigger=result.trigger,
         factor_scores=result.factor_scores.to_dict(),
@@ -141,3 +157,10 @@ def intercept(req: ToolCallRequest) -> DecisionResponse:
         explanation=llm_output.get("explanation"),
         remediation=llm_output.get("remediation"),
     )
+
+    AUDIT_STORE.append(resp.model_dump())
+
+    if result.decision.value == "escalated":
+        SLACK_NOTIFIER.send_escalation(resp.model_dump())
+
+    return resp
