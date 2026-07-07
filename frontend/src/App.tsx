@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import type { DecisionResponse, ToolInfo } from './types';
 import { TrustReceipt } from './TrustReceipt';
+import { BootstrapReview } from './BootstrapReview';
 import './App.css';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '';
@@ -18,6 +19,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tools, setTools] = useState<ToolInfo[]>([]);
+  const [mode, setMode] = useState<'intercept' | 'bootstrap'>('intercept');
 
   useEffect(() => {
     fetch(`${API_BASE}/tools`)
@@ -78,43 +80,79 @@ export default function App() {
         </div>
 
         <div className="sidebar-section">
-          <label className="input-label">Tool</label>
-          <select
-            className="input-select"
-            value={actionType}
-            onChange={e => handleToolChange(e.target.value)}
-          >
-            {tools.map(t => (
-              <option key={t.name} value={t.name}>{t.name}</option>
-            ))}
-            <option value="unknown_tool">unknown_tool</option>
-          </select>
+          <label className="input-label">Mode</label>
+          <div style={{ display: 'flex', gap: '6px' }}>
+            <button
+              className="submit-btn"
+              onClick={() => setMode('intercept')}
+              style={{
+                flex: 1,
+                background: mode === 'intercept' ? 'var(--accent)' : 'var(--bg-card)',
+                color: mode === 'intercept' ? 'white' : 'var(--text-primary)',
+                border: mode === 'intercept' ? 'none' : '1px solid var(--border)',
+              }}
+            >
+              Intercept
+            </button>
+            <button
+              className="submit-btn"
+              onClick={() => setMode('bootstrap')}
+              style={{
+                flex: 1,
+                background: mode === 'bootstrap' ? 'var(--accent)' : 'var(--bg-card)',
+                color: mode === 'bootstrap' ? 'white' : 'var(--text-primary)',
+                border: mode === 'bootstrap' ? 'none' : '1px solid var(--border)',
+              }}
+            >
+              Bootstrap
+            </button>
+          </div>
         </div>
 
-        <div className="sidebar-section">
-          <label className="input-label">Parameters (JSON)</label>
-          <textarea
-            className="input-textarea"
-            value={parameters}
-            onChange={e => setParameters(e.target.value)}
-            rows={8}
-            spellCheck={false}
-          />
-        </div>
+        {mode === 'intercept' && (
+          <>
+            <div className="sidebar-section">
+              <label className="input-label">Tool</label>
+              <select
+                className="input-select"
+                value={actionType}
+                onChange={e => handleToolChange(e.target.value)}
+              >
+                {tools.map(t => (
+                  <option key={t.name} value={t.name}>{t.name}</option>
+                ))}
+                <option value="unknown_tool">unknown_tool</option>
+              </select>
+            </div>
 
-        <button
-          className="submit-btn"
-          onClick={handleSubmit}
-          disabled={loading}
-        >
-          {loading ? 'Intercepting...' : 'Intercept Tool Call'}
-        </button>
+            <div className="sidebar-section">
+              <label className="input-label">Parameters (JSON)</label>
+              <textarea
+                className="input-textarea"
+                value={parameters}
+                onChange={e => setParameters(e.target.value)}
+                rows={8}
+                spellCheck={false}
+              />
+            </div>
 
-        {error && <div className="error-msg">{error}</div>}
+            <button
+              className="submit-btn"
+              onClick={handleSubmit}
+              disabled={loading}
+            >
+              {loading ? 'Intercepting...' : 'Intercept Tool Call'}
+            </button>
+
+            {error && <div className="error-msg">{error}</div>}
+          </>
+        )}
       </aside>
 
       <main className="main-content">
-        {decision ? (
+        {mode === 'bootstrap' ? (
+          <BootstrapReview />
+        ) : decision ? (
           <TrustReceipt data={decision} />
         ) : (
           <div className="empty-state">

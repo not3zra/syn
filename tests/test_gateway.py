@@ -78,3 +78,69 @@ def test_unknown_tool_is_blocked():
     data = response.json()
     assert data["decision"] == "blocked"
     assert data["trigger"] == "gateway:unknown_tool"
+
+
+def test_bootstrap_introspect_with_manual_schemas():
+    payload = {
+        "manual_schemas": [
+            {"name": "send_payment", "parameters": {"amount": {"type": "number"}}},
+            {"name": "delete_file", "parameters": {"file_path": {"type": "string"}}},
+        ]
+    }
+    response = client.post("/bootstrap/introspect", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert "rules" in data
+    assert "yaml" in data
+    assert "valid" in data
+    assert data["valid"] is True
+    assert len(data["rules"]) >= 2
+    assert "send_payment" in data["yaml"]
+    assert "delete_file" in data["yaml"]
+
+
+def test_bootstrap_introspect_rules_have_structure():
+    payload = {
+        "manual_schemas": [
+            {"name": "send_payment", "parameters": {"amount": {"type": "number"}}},
+        ]
+    }
+    response = client.post("/bootstrap/introspect", json=payload)
+    data = response.json()
+    rule = data["rules"][0]
+    assert "tool_name" in rule
+    assert "severity_rules" in rule
+    assert "policy_rules" in rule
+    assert "data_sensitivity_rules" in rule
+    assert "tool_trust_tier" in rule
+    assert "anomaly_lookback" in rule
+    assert "reasoning" in rule
+
+
+def test_bootstrap_approve_valid_yaml(tmp_path):
+    yaml_content = """tools:
+  send_payment:
+    severity_rules:
+      - max_amount: 1000
+        score: 20
+    policy_rules: []
+    data_sensitivity_rules: []
+    tool_trust_tier: official
+    anomaly_lookback: 20"""
+    target = str(tmp_path / "test_policy.yaml")
+    response = client.post("/bootstrap/approve", json={"yaml_content": yaml_content, "target_path": target})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert data["path"] == target
+
+
+def test_bootstrap_approve_invalid_yaml():
+    yaml_content = """tools:
+  send_payment:
+    tool_trust_tier: invalid_tier"""
+    response = client.post("/bootstrap/approve", json={"yaml_content": yaml_content})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is False
+    assert len(data["errors"]) > 0

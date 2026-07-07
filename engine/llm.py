@@ -59,6 +59,9 @@ class MockLLMClient(LLMClient):
     ) -> dict[str, Any]:
         self._call_count += 1
 
+        if output_schema and output_schema.get("type") == "bootstrap_rules":
+            return self._mock_bootstrap_rules(prompt)
+
         action_type = "the action"
         decision = "evaluated"
         trigger = "unknown"
@@ -87,6 +90,89 @@ class MockLLMClient(LLMClient):
             "explanation": explanation,
             "remediation": remediation,
         }
+
+    def _mock_bootstrap_rules(self, prompt: str) -> dict[str, Any]:
+        tool_names = [
+            "send_payment", "delete_file", "query_database", "check_balance"
+        ]
+        tools_with_schemas = []
+        for line in prompt.split("\n"):
+            if '"tool_name"' in line or "'tool_name'" in line:
+                continue
+            for name in tool_names:
+                if name in line:
+                    if name not in tools_with_schemas:
+                        tools_with_schemas.append(name)
+
+        rules = []
+        for name in tools_with_schemas:
+            rule = {
+                "tool_name": name,
+                "severity_rules": [],
+                "policy_rules": [],
+                "data_sensitivity_rules": [],
+                "tool_trust_tier": "official",
+                "anomaly_lookback": 20,
+                "reasoning": f"Generated security rules for {name} based on fintech context.",
+            }
+            if name == "send_payment":
+                rule["severity_rules"] = [
+                    {"max_amount": 1000, "score": 20},
+                    {"max_amount": 5000, "score": 50},
+                    {"max_amount": 50000, "score": 80},
+                    {"max_amount": None, "score": 95},
+                ]
+                rule["policy_rules"] = [
+                    {
+                        "description": "No payments above $5,000 to external recipients without approval",
+                        "condition": {"field": "amount", "operator": ">", "value": 5000},
+                        "score": 100,
+                    }
+                ]
+                rule["data_sensitivity_rules"] = [
+                    {"field": "recipient", "pattern": "external", "score": 40},
+                    {"field": "currency", "pattern": ".*", "score": 0},
+                ]
+            elif name == "delete_file":
+                rule["severity_rules"] = [
+                    {"path_pattern": "/etc/", "score": 95},
+                    {"path_pattern": "/data/prod/", "score": 90},
+                    {"path_pattern": ".*", "score": 60},
+                ]
+                rule["data_sensitivity_rules"] = [
+                    {"field": "file_path", "pattern": "(customer|users|accounts)", "score": 80},
+                    {"field": "file_path", "pattern": ".*", "score": 10},
+                ]
+                rule["tool_trust_tier"] = "verified"
+                rule["anomaly_lookback"] = 10
+            elif name == "query_database":
+                rule["severity_rules"] = [
+                    {"query_type": "ddl", "score": 90},
+                    {"query_type": "dml", "score": 40},
+                    {"query_type": "select", "score": 10},
+                    {"query_type": None, "score": 30},
+                ]
+                rule["data_sensitivity_rules"] = [
+                    {"field": "query", "pattern": "(DROP|ALTER|TRUNCATE|DELETE|INSERT|UPDATE)", "score": 100},
+                    {"field": "query", "pattern": "(users|customers|accounts|pii|ssn)", "score": 70},
+                    {"field": "query", "pattern": ".*", "score": 10},
+                ]
+                rule["policy_rules"] = [
+                    {
+                        "description": "No destructive DDL operations",
+                        "condition": {"field": "query", "operator": "matches", "value": "^(DROP|ALTER|TRUNCATE|DELETE|INSERT|UPDATE)"},
+                        "score": 100,
+                    }
+                ]
+            elif name == "check_balance":
+                rule["severity_rules"] = [{"max_amount": None, "score": 15}]
+                rule["data_sensitivity_rules"] = [
+                    {"field": "account_id", "pattern": ".*", "score": 20},
+                ]
+
+            rules.append(rule)
+
+        return {"tools": rules}
 
 
 class FallbackLLMClient(LLMClient):

@@ -10,6 +10,13 @@ from engine.evaluate import evaluate as risk_evaluate
 from engine.llm import create_llm_client, build_explanation_prompt
 from engine.audit import AuditStore
 from engine.slack import SlackNotifier
+from engine.bootstrap import (
+    introspect_tools,
+    generate_rules,
+    rules_to_yaml,
+    validate_generated_yaml,
+    write_policy_config,
+)
 
 REGISTERED_TOOLS: dict[str, dict[str, Any]] = {
     "send_payment": {
@@ -75,6 +82,16 @@ class DecisionResponse(BaseModel):
     remediation: str | None = None
 
 
+class BootstrapIntrospectRequest(BaseModel):
+    api_base: str | None = None
+    manual_schemas: list[dict] | None = None
+
+
+class BootstrapApproveRequest(BaseModel):
+    yaml_content: str
+    target_path: str | None = None
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -90,6 +107,34 @@ def list_tools():
         }
         for name, info in REGISTERED_TOOLS.items()
     ]
+
+
+@ app.post("/bootstrap/introspect")
+def bootstrap_introspect(req: BootstrapIntrospectRequest):
+    try:
+        schemas = req.manual_schemas or introspect_tools(api_base=req.api_base)
+        rules = generate_rules(LLM_CLIENT, schemas)
+        yaml_str = rules_to_yaml(rules)
+        errors = validate_generated_yaml(yaml_str)
+        return {
+            "schemas": schemas,
+            "rules": rules,
+            "yaml": yaml_str,
+            "valid": len(errors) == 0,
+            "errors": errors,
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.post("/bootstrap/approve")
+def bootstrap_approve(req: BootstrapApproveRequest):
+    errors = validate_generated_yaml(req.yaml_content)
+    if errors:
+        return {"success": False, "errors": errors}
+    target = Path(req.target_path) if req.target_path else config_path.with_suffix(".bootstrap.yaml")
+    write_policy_config(req.yaml_content, target)
+    return {"success": True, "path": str(target)}
 
 
 @app.get("/timeline")
