@@ -66,3 +66,15 @@ def test_intercept_query_database():
     response = client.post("/intercept", json=payload)
     assert response.status_code == 200
     assert_valid_decision_response(response.json(), "query_database")
+
+
+def test_unknown_tool_is_blocked():
+    payload = {
+        "action_type": "unknown_tool",
+        "parameters": {},
+    }
+    response = client.post("/intercept", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["decision"] == "blocked"
+    assert data["trigger"] == "gateway:unknown_tool"

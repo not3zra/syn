@@ -79,6 +79,31 @@ def list_tools():
 
 @app.post("/intercept")
 def intercept(req: ToolCallRequest) -> DecisionResponse:
+    known_tools = POLICY_CONFIG.get("tools", {})
+    if req.action_type not in known_tools:
+        return DecisionResponse(
+            decision="blocked",
+            trigger="gateway:unknown_tool",
+            factor_scores={
+                "severity": 0,
+                "policy": 100,
+                "anomaly": 0,
+                "data_sensitivity": 0,
+                "confidence": 0,
+                "tool_trust": 0,
+            },
+            session_data={
+                "session_id": None,
+                "cumulative_severity": 0,
+                "pattern_matched": False,
+            },
+            regulatory_tier="minimal_risk",
+            us_regime_flags=[],
+            action_type=req.action_type,
+            parameters_abstracted={},
+            timestamp=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        )
+
     result = risk_evaluate(
         action_type=req.action_type,
         parameters=req.parameters,
