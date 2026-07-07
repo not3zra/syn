@@ -188,3 +188,19 @@ def test_intercept_simulation_unknown_tool():
     assert data["simulation"] is True
     assert data["decision"] == "blocked"
     assert data["trigger"] == "gateway:unknown_tool"
+
+
+def test_slack_webhook_url_reads_from_env(monkeypatch):
+    monkeypatch.setenv("SYN_SLACK_WEBHOOK_URL", "https://hooks.slack.com/test")
+    import importlib
+    from gateway import main as gateway_main
+    importlib.reload(gateway_main)
+    assert gateway_main.SLACK_WEBHOOK_URL == "https://hooks.slack.com/test"
+
+
+def test_slack_webhook_url_falls_back_to_none(monkeypatch):
+    monkeypatch.delenv("SYN_SLACK_WEBHOOK_URL", raising=False)
+    import importlib
+    from gateway import main as gateway_main
+    importlib.reload(gateway_main)
+    assert gateway_main.SLACK_WEBHOOK_URL is None

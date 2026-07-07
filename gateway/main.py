@@ -64,7 +64,7 @@ else:
 audit_db_path.parent.mkdir(parents=True, exist_ok=True)
 AUDIT_STORE = AuditStore(str(audit_db_path))
 
-SLACK_WEBHOOK_URL = None
+SLACK_WEBHOOK_URL = os.environ.get("SYN_SLACK_WEBHOOK_URL")
 SLACK_NOTIFIER = SlackNotifier(webhook_url=SLACK_WEBHOOK_URL)
 
 app = FastAPI(title="syn-gateway")
