@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 
 from engine.evaluate import evaluate as risk_evaluate
-from engine.models import Decision
+from engine.llm import create_llm_client, build_explanation_prompt
 
 REGISTERED_TOOLS: dict[str, dict[str, Any]] = {
     "send_payment": {
@@ -40,6 +40,10 @@ REG_CONFIG = yaml.safe_load(reg_path.read_text())
 
 FULL_CONFIG = {**POLICY_CONFIG, "regulatory_mapping": REG_CONFIG}
 
+llm_config_path = Path(__file__).resolve().parent.parent / "engine" / "llm_config.yaml"
+LLM_CONFIG = yaml.safe_load(llm_config_path.read_text())
+LLM_CLIENT = create_llm_client(LLM_CONFIG)
+
 app = FastAPI(title="syn-gateway")
 
 
@@ -58,6 +62,8 @@ class DecisionResponse(BaseModel):
     action_type: str
     parameters_abstracted: dict
     timestamp: str
+    explanation: str | None = None
+    remediation: str | None = None
 
 
 @app.get("/health")
@@ -111,6 +117,14 @@ def intercept(req: ToolCallRequest) -> DecisionResponse:
         config=FULL_CONFIG,
     )
 
+    prompt = build_explanation_prompt(
+        action_type=req.action_type,
+        decision=result.decision.value,
+        trigger=result.trigger,
+        factor_scores=result.factor_scores.to_dict(),
+    )
+    llm_output = LLM_CLIENT.generate(prompt)
+
     return DecisionResponse(
         decision=result.decision.value,
         trigger=result.trigger,
@@ -124,4 +138,6 @@ def intercept(req: ToolCallRequest) -> DecisionResponse:
             "recipient_type": "internal",
         },
         timestamp=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        explanation=llm_output.get("explanation"),
+        remediation=llm_output.get("remediation"),
     )
