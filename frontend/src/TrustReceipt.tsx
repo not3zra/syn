@@ -45,8 +45,10 @@ function computeOverallRisk(scores: DecisionResponse['factor_scores']): number {
 function parseTrigger(trigger: string): string {
   const parts = trigger.split(':');
   if (parts.length >= 3) {
-    const [, area] = parts;
-    return area.replace(/_/g, ' ');
+    const [, area, ...details] = parts;
+    const areaStr = area.replace(/_/g, ' ');
+    const detailStr = details.join(': ').replace(/_/g, ' → ');
+    return `${areaStr}: ${detailStr}`;
   }
   if (parts.length >= 2) {
     return parts[1].replace(/_/g, ' ');
