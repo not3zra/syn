@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 from gateway.main import app, REGISTERED_TOOLS
+from engine.execution import execute_tool
 
 client = TestClient(app)
 
@@ -204,3 +205,116 @@ def test_slack_webhook_url_falls_back_to_none(monkeypatch):
     from gateway import main as gateway_main
     importlib.reload(gateway_main)
     assert gateway_main.SLACK_WEBHOOK_URL is None
+
+
+def test_execute_tool_returns_success():
+    result = execute_tool("send_payment", {"amount": 50, "recipient": "alice"})
+    assert result == {
+        "action": "send_payment",
+        "params": {"amount": 50, "recipient": "alice"},
+        "status": "success",
+    }
+
+
+def test_execute_tool_logs_on_call(caplog):
+    import logging
+    caplog.set_level(logging.INFO)
+    execute_tool("delete_file", {"file_path": "/tmp/test.txt"})
+    assert any("[exec] delete_file" in record.getMessage() for record in caplog.records)
+
+
+def test_intercept_approved_includes_execution(monkeypatch):
+    import importlib
+    import tempfile
+    from pathlib import Path
+    from fastapi.testclient import TestClient
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        monkeypatch.setenv("SYN_AUDIT_DB_PATH", str(db_path))
+        from gateway import main as gateway_main
+        importlib.reload(gateway_main)
+        test_client = TestClient(gateway_main.app)
+
+        payload = {
+            "action_type": "send_payment",
+            "parameters": {"amount": 50, "recipient": "alice"},
+        }
+        resp = test_client.post("/intercept", json=payload)
+        data = resp.json()
+        assert data["decision"] == "approved"
+        assert data["execution"] == {
+            "action": "send_payment",
+            "params": {"amount": 50, "recipient": "alice"},
+            "status": "success",
+        }
+
+
+def test_intercept_escalated_no_execution(monkeypatch):
+    import importlib
+    import tempfile
+    from pathlib import Path
+    from fastapi.testclient import TestClient
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        monkeypatch.setenv("SYN_AUDIT_DB_PATH", str(db_path))
+        from gateway import main as gateway_main
+        importlib.reload(gateway_main)
+        test_client = TestClient(gateway_main.app)
+
+        payload = {
+            "action_type": "delete_file",
+            "parameters": {"file_path": "/tmp/customers.xlsx"},
+        }
+        resp = test_client.post("/intercept", json=payload)
+        data = resp.json()
+        assert data["decision"] == "escalated"
+        assert data["execution"] is None
+
+
+def test_intercept_blocked_no_execution(monkeypatch):
+    import importlib
+    import tempfile
+    from pathlib import Path
+    from fastapi.testclient import TestClient
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        monkeypatch.setenv("SYN_AUDIT_DB_PATH", str(db_path))
+        from gateway import main as gateway_main
+        importlib.reload(gateway_main)
+        test_client = TestClient(gateway_main.app)
+
+        payload = {
+            "action_type": "send_payment",
+            "parameters": {"amount": 100000, "recipient": "bob"},
+        }
+        resp = test_client.post("/intercept", json=payload)
+        data = resp.json()
+        assert data["decision"] == "blocked"
+        assert data["execution"] is None
+
+
+def test_intercept_simulation_no_execution(monkeypatch):
+    import importlib
+    import tempfile
+    from pathlib import Path
+    from fastapi.testclient import TestClient
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        monkeypatch.setenv("SYN_AUDIT_DB_PATH", str(db_path))
+        from gateway import main as gateway_main
+        importlib.reload(gateway_main)
+        test_client = TestClient(gateway_main.app)
+
+        payload = {
+            "action_type": "send_payment",
+            "parameters": {"amount": 50, "recipient": "alice"},
+            "mode": "simulation",
+        }
+        resp = test_client.post("/intercept", json=payload)
+        data = resp.json()
+        assert data["decision"] == "approved"
+        assert data["execution"] is None

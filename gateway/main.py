@@ -9,6 +9,7 @@ from fastapi import FastAPI, Query
 from pydantic import BaseModel
 
 from engine.evaluate import evaluate as risk_evaluate
+from engine.execution import execute_tool
 from engine.llm import create_llm_client, build_explanation_prompt
 from engine.audit import AuditStore
 from engine.slack import SlackNotifier
@@ -87,6 +88,7 @@ class DecisionResponse(BaseModel):
     action_type: str
     parameters_abstracted: dict
     timestamp: str
+    execution: dict | None = None
     explanation: str | None = None
     remediation: str | None = None
     simulation: bool = False
@@ -222,6 +224,9 @@ def intercept(req: ToolCallRequest) -> DecisionResponse:
     )
 
     if not is_simulation:
+        if result.decision.value == "approved":
+            resp.execution = execute_tool(req.action_type, req.parameters)
+
         entry = resp.model_dump()
         entry["parameters"] = req.parameters
         AUDIT_STORE.append(entry, session_id=session_id)
