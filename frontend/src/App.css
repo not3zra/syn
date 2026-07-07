@@ -231,6 +231,27 @@
   font-size: 18px;
 }
 
+.simulation-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 24px;
+  margin: 8px 24px 0;
+  border-radius: var(--radius-sm);
+  background: rgba(99, 102, 241, 0.08);
+  border: 1px solid rgba(99, 102, 241, 0.2);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.simulation-icon {
+  font-size: 14px;
+}
+
 .receipt-body {
   padding: 20px 24px;
   display: flex;

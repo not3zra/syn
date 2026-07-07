@@ -82,6 +82,14 @@ export function TrustReceipt({ data }: TrustReceiptProps) {
         </span>
         <span className="decision-label">{style.label}</span>
       </div>
+      {data.simulation && (
+        <div
+          className="simulation-badge"
+        >
+          <span className="simulation-icon">◇</span>
+          <span>Simulation — No side effects</span>
+        </div>
+      )}
 
       <div className="receipt-body">
         <div className="receipt-section">

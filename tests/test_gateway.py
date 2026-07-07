@@ -19,6 +19,7 @@ def assert_valid_decision_response(data, action_type):
     assert data["action_type"] == action_type
     assert isinstance(data["parameters_abstracted"], dict)
     assert "timestamp" in data
+    assert "simulation" in data
 
 
 def test_lists_registered_tools():
@@ -144,3 +145,46 @@ def test_bootstrap_approve_invalid_yaml():
     data = response.json()
     assert data["success"] is False
     assert len(data["errors"]) > 0
+
+
+def test_intercept_simulation_returns_valid():
+    payload = {
+        "action_type": "send_payment",
+        "parameters": {"amount": 100, "recipient": "alice"},
+        "mode": "simulation",
+    }
+    response = client.post("/intercept", json=payload)
+    assert response.status_code == 200
+    assert_valid_decision_response(response.json(), "send_payment")
+
+
+def test_intercept_simulation_sets_flag():
+    payload = {
+        "action_type": "send_payment",
+        "parameters": {"amount": 100, "recipient": "alice"},
+        "mode": "simulation",
+    }
+    response = client.post("/intercept", json=payload)
+    assert response.json()["simulation"] is True
+
+
+def test_intercept_live_default_no_simulation():
+    payload = {
+        "action_type": "send_payment",
+        "parameters": {"amount": 100, "recipient": "alice"},
+    }
+    response = client.post("/intercept", json=payload)
+    assert response.json()["simulation"] is False
+
+
+def test_intercept_simulation_unknown_tool():
+    payload = {
+        "action_type": "unknown_tool",
+        "parameters": {},
+        "mode": "simulation",
+    }
+    response = client.post("/intercept", json=payload)
+    data = response.json()
+    assert data["simulation"] is True
+    assert data["decision"] == "blocked"
+    assert data["trigger"] == "gateway:unknown_tool"

@@ -20,6 +20,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [tools, setTools] = useState<ToolInfo[]>([]);
   const [mode, setMode] = useState<'intercept' | 'bootstrap'>('intercept');
+  const [simulationMode, setSimulationMode] = useState(false);
 
   useEffect(() => {
     fetch(`${API_BASE}/tools`)
@@ -58,7 +59,11 @@ export default function App() {
       const res = await fetch(`${API_BASE}/intercept`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action_type: actionType, parameters: parsed }),
+        body: JSON.stringify({
+          action_type: actionType,
+          parameters: parsed,
+          mode: simulationMode ? 'simulation' : 'live',
+        }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: DecisionResponse = await res.json();
@@ -68,7 +73,7 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  }, [actionType, parameters]);
+  }, [actionType, parameters, simulationMode]);
 
   return (
     <div className="app-shell">
@@ -111,6 +116,40 @@ export default function App() {
 
         {mode === 'intercept' && (
           <>
+            <div className="sidebar-section">
+              <label className="input-label">Runtime Mode</label>
+              <div style={{ display: 'flex', gap: '6px' }}>
+                <button
+                  className="submit-btn"
+                  onClick={() => setSimulationMode(false)}
+                  style={{
+                    flex: 1,
+                    background: !simulationMode ? 'var(--accent)' : 'var(--bg-card)',
+                    color: !simulationMode ? 'white' : 'var(--text-primary)',
+                    border: !simulationMode ? 'none' : '1px solid var(--border)',
+                    fontSize: '12px',
+                    padding: '8px',
+                  }}
+                >
+                  LIVE
+                </button>
+                <button
+                  className="submit-btn"
+                  onClick={() => setSimulationMode(true)}
+                  style={{
+                    flex: 1,
+                    background: simulationMode ? 'var(--accent)' : 'var(--bg-card)',
+                    color: simulationMode ? 'white' : 'var(--text-primary)',
+                    border: simulationMode ? 'none' : '1px solid var(--border)',
+                    fontSize: '12px',
+                    padding: '8px',
+                  }}
+                >
+                  SIMULATION
+                </button>
+              </div>
+            </div>
+
             <div className="sidebar-section">
               <label className="input-label">Tool</label>
               <select

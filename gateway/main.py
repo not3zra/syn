@@ -71,6 +71,7 @@ app = FastAPI(title="syn-gateway")
 class ToolCallRequest(BaseModel):
     action_type: str
     parameters: dict
+    mode: str = "live"
 
 
 class DecisionResponse(BaseModel):
@@ -85,6 +86,7 @@ class DecisionResponse(BaseModel):
     timestamp: str
     explanation: str | None = None
     remediation: str | None = None
+    simulation: bool = False
 
 
 class BootstrapIntrospectRequest(BaseModel):
@@ -151,6 +153,7 @@ def list_timeline(outcome: str | None = Query(None)):
 def intercept(req: ToolCallRequest) -> DecisionResponse:
     known_tools = POLICY_CONFIG.get("tools", {})
     if req.action_type not in known_tools:
+        is_simulation = req.mode == "simulation"
         resp = DecisionResponse(
             decision="blocked",
             trigger="gateway:unknown_tool",
@@ -172,8 +175,10 @@ def intercept(req: ToolCallRequest) -> DecisionResponse:
             action_type=req.action_type,
             parameters_abstracted={},
             timestamp=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            simulation=is_simulation,
         )
-        AUDIT_STORE.append(resp.model_dump())
+        if not is_simulation:
+            AUDIT_STORE.append(resp.model_dump())
         return resp
 
     history = AUDIT_STORE.get_history(req.action_type)
@@ -192,6 +197,8 @@ def intercept(req: ToolCallRequest) -> DecisionResponse:
     )
     llm_output = LLM_CLIENT.generate(prompt)
 
+    is_simulation = req.mode == "simulation"
+
     resp = DecisionResponse(
         decision=result.decision.value,
         trigger=result.trigger,
@@ -207,13 +214,15 @@ def intercept(req: ToolCallRequest) -> DecisionResponse:
         timestamp=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         explanation=llm_output.get("explanation"),
         remediation=llm_output.get("remediation"),
+        simulation=is_simulation,
     )
 
-    entry = resp.model_dump()
-    entry["parameters"] = req.parameters
-    AUDIT_STORE.append(entry)
+    if not is_simulation:
+        entry = resp.model_dump()
+        entry["parameters"] = req.parameters
+        AUDIT_STORE.append(entry)
 
-    if result.decision.value == "escalated":
-        SLACK_NOTIFIER.send_escalation(resp.model_dump())
+        if result.decision.value == "escalated":
+            SLACK_NOTIFIER.send_escalation(resp.model_dump())
 
     return resp

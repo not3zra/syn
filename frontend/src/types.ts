@@ -25,6 +25,7 @@ export interface DecisionResponse {
   timestamp: string;
   explanation?: string;
   remediation?: string;
+  simulation?: boolean;
 }
 
 export interface ToolInfo {
