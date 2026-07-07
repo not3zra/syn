@@ -90,5 +90,22 @@ class AuditStore:
         self._conn.commit()
         return cursor.rowcount
 
+    def get_history(self, action_type: str, limit: int = 50) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT entry FROM decisions WHERE action_type = ? ORDER BY created_at ASC LIMIT ?",
+            (action_type, limit),
+        )
+        history: list[dict[str, Any]] = []
+        for row in rows.fetchall():
+            entry = json.loads(row["entry"])
+            params = entry.get("parameters") or entry.get("parameters_abstracted", {})
+            severity = entry.get("factor_scores", {}).get("severity", 0)
+            history.append({
+                "action_type": action_type,
+                "parameters": params,
+                "severity": severity,
+            })
+        return history
+
     def close(self):
         self._conn.close()

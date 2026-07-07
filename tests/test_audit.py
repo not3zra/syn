@@ -96,3 +96,41 @@ class TestAuditStore:
         pending = self.store.list_pending_escalations()
         assert len(pending) == 1
         assert pending[0]["action_type"] == "b"
+
+    def test_get_history_returns_entries_for_action_type(self):
+        self.store.append({
+            "decision": "approved",
+            "action_type": "send_payment",
+            "parameters_abstracted": {"amount_category": "low"},
+            "factor_scores": {"severity": 20},
+        })
+        self.store.append({
+            "decision": "escalated",
+            "action_type": "query_database",
+        })
+        self.store.append({
+            "decision": "approved",
+            "action_type": "send_payment",
+            "factor_scores": {"severity": 50},
+        })
+
+        history = self.store.get_history("send_payment")
+        assert len(history) == 2
+        assert all(h["action_type"] == "send_payment" for h in history)
+        assert history[0]["severity"] == 20
+        assert history[1]["severity"] == 50
+
+    def test_get_history_returns_empty_list_when_no_matches(self):
+        history = self.store.get_history("nonexistent")
+        assert history == []
+
+    def test_get_history_limited_to_recent_entries(self):
+        for i in range(5):
+            self.store.append({
+                "decision": "approved",
+                "action_type": "send_payment",
+                "factor_scores": {"severity": 10},
+            })
+
+        history = self.store.get_history("send_payment", limit=3)
+        assert len(history) == 3

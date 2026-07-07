@@ -1,3 +1,4 @@
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -53,7 +54,11 @@ llm_config_path = Path(__file__).resolve().parent.parent / "engine" / "llm_confi
 LLM_CONFIG = yaml.safe_load(llm_config_path.read_text())
 LLM_CLIENT = create_llm_client(LLM_CONFIG)
 
-audit_db_path = Path(__file__).resolve().parent.parent / "data" / "audit.db"
+audit_db_path_env = os.environ.get("SYN_AUDIT_DB_PATH")
+if audit_db_path_env:
+    audit_db_path = Path(audit_db_path_env)
+else:
+    audit_db_path = Path(__file__).resolve().parent.parent / "data" / "audit.db"
 audit_db_path.parent.mkdir(parents=True, exist_ok=True)
 AUDIT_STORE = AuditStore(str(audit_db_path))
 
@@ -171,10 +176,11 @@ def intercept(req: ToolCallRequest) -> DecisionResponse:
         AUDIT_STORE.append(resp.model_dump())
         return resp
 
+    history = AUDIT_STORE.get_history(req.action_type)
     result = risk_evaluate(
         action_type=req.action_type,
         parameters=req.parameters,
-        session_context={"history": [], "session_id": None},
+        session_context={"history": history, "session_id": None},
         config=FULL_CONFIG,
     )
 
@@ -203,7 +209,9 @@ def intercept(req: ToolCallRequest) -> DecisionResponse:
         remediation=llm_output.get("remediation"),
     )
 
-    AUDIT_STORE.append(resp.model_dump())
+    entry = resp.model_dump()
+    entry["parameters"] = req.parameters
+    AUDIT_STORE.append(entry)
 
     if result.decision.value == "escalated":
         SLACK_NOTIFIER.send_escalation(resp.model_dump())
