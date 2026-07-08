@@ -18,8 +18,5 @@ test = [
     "httpx>=0.27.0",
 ]
 
-[tool.setuptools.packages.find]
-include = ["gateway*", "engine*"]
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
