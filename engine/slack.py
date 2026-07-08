@@ -14,7 +14,30 @@ class SlackNotifier:
         action_type = entry.get("action_type", "unknown")
         decision = entry.get("decision", "unknown")
         trigger = entry.get("trigger", "unknown")
-        risk_score = entry.get("factor_scores", {}).get("severity", 0)
+
+        risk_score: str | float = entry.get("factor_scores", {}).get("severity", 0)
+        if trigger.startswith("session:cumulative_threshold"):
+            risk_score = entry.get("session_data", {}).get("cumulative_severity", 0)
+        elif trigger.startswith("session:pattern_matched"):
+            risk_score = entry.get("session_data", {}).get("cumulative_severity", 0)
+        elif trigger.startswith("decision_tree:confidence_floor"):
+            risk_score = entry.get("factor_scores", {}).get("confidence", 0)
+        elif trigger.startswith("weighted_score:"):
+            parts = trigger.split(":")
+            if len(parts) >= 3:
+                try:
+                    risk_score = float(parts[-1])
+                except (ValueError, TypeError):
+                    pass
+
+        label = "Risk Score"
+        if trigger.startswith("session:"):
+            label = "Cumulative Risk"
+        elif trigger.startswith("weighted_score:"):
+            label = "Weighted Score"
+        elif trigger.startswith("decision_tree:"):
+            label = "Driving Factor"
+
         explanation = entry.get("explanation", "No explanation available")
         timestamp = entry.get("timestamp", "")
 
@@ -32,7 +55,7 @@ class SlackNotifier:
                     "fields": [
                         {"type": "mrkdwn", "text": f"*Decision:*\n{decision}"},
                         {"type": "mrkdwn", "text": f"*Trigger:*\n{trigger}"},
-                        {"type": "mrkdwn", "text": f"*Risk Score:*\n{risk_score}"},
+                        {"type": "mrkdwn", "text": f"*{label}:*\n{risk_score}"},
                         {"type": "mrkdwn", "text": f"*Timestamp:*\n{timestamp}"},
                     ],
                 },

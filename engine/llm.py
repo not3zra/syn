@@ -14,36 +14,63 @@ class LLMClient(ABC):
         ...
 
 
-def _get_mock_explanation(action_type: str, decision: str, trigger: str) -> str:
-    explanations = {
-        "severity_floor": (
-            f"The {action_type} action was blocked because its severity score exceeded the "
-            f"maximum threshold. This action carries inherent risk that cannot be mitigated."
-        ),
-        "policy_floor": (
-            f"The {action_type} action was blocked because it violates an explicit security policy rule. "
-            f"Policy violations are automatically denied regardless of other risk factors."
-        ),
-        "confidence_floor": (
-            f"The {action_type} action was escalated for human review because the system has "
-            f"insufficient historical data to assess this action with confidence. "
-            f"More data is needed before automated decisions can be made."
-        ),
-        "pattern_matched": (
+def _format_pair(trigger: str) -> str:
+    parts = trigger.split(":")
+    if len(parts) >= 3:
+        raw = parts[2]
+        segs = raw.split("_")
+        if len(segs) == 4:
+            return f"{segs[0]}_{segs[1]} followed by {segs[2]}_{segs[3]}"
+    return ""
+
+
+def _get_mock_explanation(action_type: str, decision: str, trigger: str, top_factor: str | None = None) -> str:
+    if "pattern_matched" in trigger:
+        pair_str = _format_pair(trigger)
+        if pair_str:
+            return (
+                f"The {action_type} action was escalated because it matches a known "
+                f"risky sequence pattern: {pair_str}. "
+                f"This pair of actions in sequence has been flagged as potentially harmful."
+            )
+        return (
             f"The {action_type} action was escalated because it matches a known risky sequence pattern. "
             f"This pair of actions in sequence has been flagged as potentially harmful."
-        ),
-        "cumulative_threshold": (
+        )
+
+    if "cumulative_threshold" in trigger:
+        return (
             f"The {action_type} action was escalated because the cumulative risk across all "
             f"actions in this session has exceeded the safety threshold. "
             f"Multiple medium-risk actions together warrant human review."
-        ),
-    }
+        )
+
+    if "severity_floor" in trigger:
+        return (
+            f"The {action_type} action was blocked because its severity score exceeded the "
+            f"maximum threshold. This action carries inherent risk that cannot be mitigated."
+        )
+
+    if "policy_floor" in trigger:
+        return (
+            f"The {action_type} action was blocked because it violates an explicit security policy rule. "
+            f"Policy violations are automatically denied regardless of other risk factors."
+        )
+
+    if "confidence_floor" in trigger:
+        return (
+            f"The {action_type} action was escalated for human review because the system has "
+            f"insufficient historical data to assess this action with confidence. "
+            f"More data is needed before automated decisions can be made."
+        )
 
     base = f"The {action_type} action was {decision}."
-    for key, text in explanations.items():
-        if key in trigger:
-            return text
+    if top_factor:
+        return (
+            f"The {action_type} action was {decision} based on the combined assessment of all "
+            f"six risk factors. The most significant contributing factor was {top_factor}, "
+            f"which notably influenced the weighted risk score evaluation."
+        )
     return (
         f"The {action_type} action was {decision} based on the combined assessment of all "
         f"six risk factors. {base.capitalize()} after the weighted risk score evaluation."
@@ -68,6 +95,7 @@ class MockLLMClient(LLMClient):
         decision = "evaluated"
         trigger = "unknown"
 
+        top_factor = None
         for line in prompt.split("\n"):
             if "Action type:" in line:
                 parts = line.split("Action type:")
@@ -81,8 +109,10 @@ class MockLLMClient(LLMClient):
                 parts = line.split("Triggered by:")
                 if len(parts) > 1:
                     trigger = parts[1].strip()
+            if "The most significant contributing factor is " in line:
+                top_factor = line.split("The most significant contributing factor is ")[1].strip().rstrip(".")
 
-        explanation = _get_mock_explanation(action_type, decision, trigger)
+        explanation = _get_mock_explanation(action_type, decision, trigger, top_factor=top_factor)
         remediation = (
             f"To proceed with this {action_type} action, please request a security review "
             f"or contact your administrator for approval."
@@ -203,6 +233,36 @@ class FallbackLLMClient(LLMClient):
         output_schema: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         self._ensure_client()
+
+        if output_schema and output_schema.get("type") == "bootstrap_rules":
+            response = self._client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a security policy generator for an AI governance system. "
+                            "Respond with valid JSON containing a 'tools' array. "
+                            "Each tool object must have: tool_name, severity_rules, policy_rules, "
+                            "data_sensitivity_rules, tool_trust_tier, anomaly_lookback, reasoning. "
+                            "Return ONLY valid JSON — no explanation, no markdown."
+                        ),
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.3,
+                max_tokens=800,
+            )
+            text = response.choices[0].message.content or "{}"
+            try:
+                result = json.loads(text)
+                return {
+                    "tools": result.get("tools", []),
+                }
+            except json.JSONDecodeError:
+                return {"tools": []}
+
         response = self._client.chat.completions.create(
             model=self.model,
             messages=[
@@ -233,16 +293,35 @@ class FallbackLLMClient(LLMClient):
             }
 
 
+class FireworksLLMClient(FallbackLLMClient):
+    def __init__(
+        self,
+        api_key: str | None = None,
+        base_url: str = "https://api.fireworks.ai/inference/v1",
+        model: str = "accounts/fireworks/models/llama-v3p3-70b-instruct",
+    ):
+        self.api_key = api_key or os.environ.get("FIREWORKS_API_KEY") or os.environ.get("OPENAI_API_KEY")
+        self.base_url = base_url
+        self.model = model
+        self._client = None
+
+
 def create_llm_client(config: dict[str, Any]) -> LLMClient:
     provider = config.get("provider", "mock")
 
     if provider == "mock":
         return MockLLMClient()
-    if provider == "fallback":
+    if provider in ("fallback", "groq"):
         return FallbackLLMClient(
             api_key=config.get("api_key"),
             base_url=config.get("base_url", "https://api.groq.com/openai/v1"),
             model=config.get("model", "llama-3.3-70b-versatile"),
+        )
+    if provider == "fireworks":
+        return FireworksLLMClient(
+            api_key=config.get("api_key"),
+            base_url=config.get("base_url", "https://api.fireworks.ai/inference/v1"),
+            model=config.get("model", "accounts/fireworks/models/llama-v3p3-70b-instruct"),
         )
 
     raise ValueError(f"Unknown LLM provider: {provider}")
@@ -253,12 +332,16 @@ def build_explanation_prompt(
     decision: str,
     trigger: str,
     factor_scores: dict[str, float],
+    top_factor: str | None = None,
 ) -> str:
     scores_str = ", ".join(f"{k}: {v}" for k, v in factor_scores.items())
-    return (
+    prompt = (
         f"You are explaining a security decision made by a deterministic AI governance system.\n"
         f"Context: Action type: {action_type}, Decision: {decision}, Triggered by: {trigger}\n"
         f"Factor scores (context only): {scores_str}\n"
         f"Explain in 2 sentences why the decision was made, focused on the trigger: \"{trigger}\".\n"
-        f"Do not infer other reasons."
     )
+    if top_factor:
+        prompt += f"The most significant contributing factor is {top_factor}. Mention this factor in your explanation.\n"
+    prompt += "Do not infer other reasons."
+    return prompt

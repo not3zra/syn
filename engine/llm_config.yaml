@@ -1,1 +1,6 @@
-provider: mock
+# Provider: mock | fallback | groq | fireworks
+provider: fireworks
+# Fireworks model (used when provider=fireworks):
+model: accounts/fireworks/models/llama-v3p3-70b-instruct
+# Groq model (used when provider=fallback or groq):
+# model: llama-3.3-70b-versatile

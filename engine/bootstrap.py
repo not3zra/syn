@@ -64,10 +64,11 @@ def generate_rules(
 
 def _yaml_quote(val: str) -> str:
     if val in ("null", "true", "false", "yes", "no", "on", "off"):
-        return f'"{val}"'
-    special = {":", "#", "{", "}", "[", "]", ",", "&", "*", "?", "|", "-", "<", ">", "=", "!", "%", "@", "`"}
-    if any(c in val for c in special):
-        return f'"{val}"'
+        return f"'{val}'"
+    special = {":", "#", "{", "}", "[", "]", ",", "&", "*", "?", "|", "-", "<", ">", "=", "!", "%", "@", "`", "$"}
+    if any(c in val for c in special) or "\\" in val:
+        escaped = val.replace("'", "''")
+        return f"'{escaped}'"
     return val
 
 

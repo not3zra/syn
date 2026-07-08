@@ -5,8 +5,11 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from dotenv import load_dotenv
 from fastapi import FastAPI, Query
 from pydantic import BaseModel
+
+load_dotenv()
 
 from engine.evaluate import evaluate as risk_evaluate
 from engine.execution import execute_tool
@@ -56,6 +59,27 @@ FULL_CONFIG = {**POLICY_CONFIG, "regulatory_mapping": REG_CONFIG}
 llm_config_path = Path(__file__).resolve().parent.parent / "engine" / "llm_config.yaml"
 LLM_CONFIG = yaml.safe_load(llm_config_path.read_text())
 LLM_CLIENT = create_llm_client(LLM_CONFIG)
+
+bootstrap_config_path = Path(__file__).resolve().parent.parent / "engine" / "policy_config.bootstrap.yaml"
+_bootstrap_config: dict | None = None
+_bootstrap_mtime: float = 0
+
+
+def _get_merged_tools() -> dict:
+    global _bootstrap_config, _bootstrap_mtime
+    base = POLICY_CONFIG.get("tools", {})
+
+    try:
+        mtime = bootstrap_config_path.stat().st_mtime
+        if mtime != _bootstrap_mtime:
+            _bootstrap_config = yaml.safe_load(bootstrap_config_path.read_text())
+            _bootstrap_mtime = mtime
+    except (FileNotFoundError, OSError):
+        _bootstrap_config = None
+
+    if _bootstrap_config:
+        return {**base, **(_bootstrap_config.get("tools", {}))}
+    return base
 
 audit_db_path_env = os.environ.get("SYN_AUDIT_DB_PATH")
 if audit_db_path_env:
@@ -185,8 +209,8 @@ def intercept(req: ToolCallRequest) -> DecisionResponse:
     is_simulation = req.mode == "simulation"
     now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
-    known_tools = POLICY_CONFIG.get("tools", {})
-    if req.action_type not in known_tools:
+    merged_tools = _get_merged_tools()
+    if req.action_type not in merged_tools:
         resp = DecisionResponse(
             decision="blocked",
             trigger="gateway:unknown_tool",
@@ -214,19 +238,40 @@ def intercept(req: ToolCallRequest) -> DecisionResponse:
             AUDIT_STORE.append(resp.model_dump(), session_id=session_id)
         return resp
 
+    eval_config = {**FULL_CONFIG, "tools": merged_tools}
     session_history = AUDIT_STORE.get_session_history(session_id)
     result = risk_evaluate(
         action_type=req.action_type,
         parameters=req.parameters,
         session_context={"history": session_history, "session_id": session_id},
-        config=FULL_CONFIG,
+        config=eval_config,
     )
+
+    top_factor: str | None = None
+    if result.trigger.startswith("weighted_score:"):
+        weights = POLICY_CONFIG.get("weights", {})
+        raw = result.factor_scores.to_dict()
+        contributions: dict[str, float] = {}
+        for factor, w in [
+            ("severity", weights.get("severity", 0.30)),
+            ("policy", weights.get("policy", 0.20)),
+            ("anomaly", weights.get("anomaly", 0.10)),
+            ("data_sensitivity", weights.get("data_sensitivity", 0.15)),
+            ("confidence", weights.get("confidence", 0.05)),
+            ("tool_trust", weights.get("tool_trust", 0.20)),
+        ]:
+            if factor in ("confidence", "tool_trust"):
+                contributions[factor] = (100 - raw.get(factor, 0)) * w
+            else:
+                contributions[factor] = raw.get(factor, 0) * w
+        top_factor = max(contributions, key=contributions.get)
 
     prompt = build_explanation_prompt(
         action_type=req.action_type,
         decision=result.decision.value,
         trigger=result.trigger,
         factor_scores=result.factor_scores.to_dict(),
+        top_factor=top_factor,
     )
     llm_output = LLM_CLIENT.generate(prompt)
 
