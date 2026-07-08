@@ -82,7 +82,10 @@ def test_unknown_tool_is_blocked():
     assert data["trigger"] == "gateway:unknown_tool"
 
 
-def test_bootstrap_introspect_with_manual_schemas():
+def test_bootstrap_introspect_with_manual_schemas(monkeypatch):
+    from engine.llm import MockLLMClient
+    from gateway import main as gateway_main
+    monkeypatch.setattr(gateway_main, "LLM_CLIENT", MockLLMClient())
     payload = {
         "manual_schemas": [
             {"name": "send_payment", "parameters": {"amount": {"type": "number"}}},
@@ -101,7 +104,10 @@ def test_bootstrap_introspect_with_manual_schemas():
     assert "delete_file" in data["yaml"]
 
 
-def test_bootstrap_introspect_rules_have_structure():
+def test_bootstrap_introspect_rules_have_structure(monkeypatch):
+    from engine.llm import MockLLMClient
+    from gateway import main as gateway_main
+    monkeypatch.setattr(gateway_main, "LLM_CLIENT", MockLLMClient())
     payload = {
         "manual_schemas": [
             {"name": "send_payment", "parameters": {"amount": {"type": "number"}}},
@@ -200,6 +206,7 @@ def test_slack_webhook_url_reads_from_env(monkeypatch):
 
 
 def test_slack_webhook_url_falls_back_to_none(monkeypatch):
+    monkeypatch.setattr("dotenv.load_dotenv", lambda **kwargs: None)
     monkeypatch.delenv("SYN_SLACK_WEBHOOK_URL", raising=False)
     import importlib
     from gateway import main as gateway_main

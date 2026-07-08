@@ -89,8 +89,13 @@ class TestAuditStore:
         assert len(pending) == 0
 
     def test_auto_expire(self):
-        self.store.append({"action_type": "a", "decision": "escalated", "timestamp": "2026-01-01T00:00:00Z"})
-        self.store.append({"action_type": "b", "decision": "escalated", "timestamp": "2026-07-07T12:00:00Z"})
+        from datetime import datetime, timezone, timedelta
+        now = datetime.now(timezone.utc)
+        old = (now - timedelta(hours=5)).isoformat()
+        recent = (now - timedelta(hours=1)).isoformat()
+
+        self.store.append({"action_type": "a", "decision": "escalated", "timestamp": old})
+        self.store.append({"action_type": "b", "decision": "escalated", "timestamp": recent})
 
         self.store.expire_old(hours=4)
         pending = self.store.list_pending_escalations()

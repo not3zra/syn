@@ -147,7 +147,11 @@ class TestRiskEngineScenarios:
         data = resp.json()
         assert data["decision"] == "escalated"
         assert "weighted_score" in data["trigger"]
-        assert isinstance(data.get("explanation"), str) and len(data["explanation"]) > 0
+        explanation = data.get("explanation", "")
+        contributor_phrases = ["severity", "data_sensitivity", "tool_trust", "policy", "anomaly", "confidence"]
+        assert any(p in explanation for p in contributor_phrases), (
+            f"Explanation '{explanation}' does not name any contributing factor"
+        )
         assert data["rollback_plan"] is not None
         assert data["expires_at"] is not None
 
@@ -164,7 +168,11 @@ class TestRiskEngineScenarios:
         data = resp.json()
         assert data["decision"] == "escalated"
         assert "weighted_score" in data["trigger"]
-        assert isinstance(data.get("explanation"), str) and len(data["explanation"]) > 0
+        explanation = data.get("explanation", "")
+        contributor_phrases = ["severity", "data_sensitivity", "tool_trust", "policy", "anomaly", "confidence"]
+        assert any(p in explanation for p in contributor_phrases), (
+            f"Explanation '{explanation}' does not name any contributing factor"
+        )
 
     def test_delete_etc_shadow_blocked(self, server):
         base_url, _ = server
