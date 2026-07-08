@@ -1,6 +1,6 @@
 # PRD: AI Action Firewall
 
-**Status:** Draft
+**Status:** Implemented (all core issues live-verified)
 **Target track:** AMD ACT II Hackathon — Unicorn Track
 **Submission deadline:** July 11, 2026, 15:00 UTC
 
@@ -20,7 +20,7 @@ The core thesis: **a governance layer for AI agents must be deterministic (not a
 
 AI Action Firewall is a governance layer that sits between an AI agent and the tools it calls. Every tool call is intercepted by an MCP-compatible gateway, scored against six deterministic risk factors, checked against the session's recent history for risky patterns, and either approved, escalated to a human, or blocked — with a full audit trail and a plain-English explanation.
 
-The decision never leaves local code. Fireworks AI (the hackathon-required LLM stack) receives only abstracted numeric scores and generates explanation, remediation, and rollback text — it never makes or influences the allow/block/escalate decision. An AI Bootstrap feature reads tool schemas via MCP introspection and auto-generates the initial security profile, reducing setup from days to minutes.
+The decision never leaves local code. The LLM (Fireworks or Groq, config-swappable) receives only abstracted numeric scores and generates explanation, remediation, and rollback text — it never makes or influences the allow/block/escalate decision. An AI Bootstrap feature reads tool schemas and auto-generates the initial security profile, reducing setup from days to minutes.
 
 ---
 
@@ -54,7 +54,7 @@ The decision never leaves local code. Fireworks AI (the hackathon-required LLM s
 
 14. As a human approver, I want each escalation to include a rollback plan ("what to do if this was wrong") and an expiry time, so that stale approvals do not linger indefinitely.
 
-15. As a human approver, I want a Trust Receipt UI showing the action, risk gauge, session risk gauge, the explicit trigger string (e.g., `session_pattern:check_balance_send_payment`), regulatory badge, six-factor breakdown, AI explanation, audit hash, and timestamp, so that I can make a fully-informed decision at a glance and verify that the AI explanation matches the deterministic trigger.
+15. As a human approver, I want a Trust Receipt UI showing the action, risk gauge, session risk gauge, the explicit trigger string (e.g., `session:pattern_matched:check_balance_send_payment`), regulatory badge, six-factor breakdown, AI explanation, audit hash, and timestamp, so that I can make a fully-informed decision at a glance and verify that the AI explanation matches the deterministic trigger.
 
 16. As a human approver, I want the audit log presented as a chronological timeline (not a table), so that I can quickly scan what happened and in what order.
 
@@ -62,11 +62,11 @@ The decision never leaves local code. Fireworks AI (the hackathon-required LLM s
 
 18. As a platform engineer deploying the firewall, I want the entire system containerized with Docker from Day 1, so that I never hit a "works on my machine" problem during a deadline.
 
-19. As a platform engineer, I want the LLM provider abstracted behind a config-swappable interface, so that I can use a fallback provider during development and flip to Fireworks when API access is confirmed.
+19. As a platform engineer, I want the LLM provider abstracted behind a config-swappable interface, so that I can switch between providers (mock, Groq, Fireworks) by editing one line in `llm_config.yaml`.
 
-20. As a platform engineer, I want a Fireworks cutoff policy: if Fireworks access is not confirmed by end of Day 3, the submission ships on the fallback provider with Fireworks calls pre-tested and ready to flip via config change.
+20. [Implemented] As a platform engineer, I want a Fireworks cutoff policy: if Fireworks access is not confirmed by end of Day 3, the submission ships on the fallback provider with Fireworks calls pre-tested and ready to flip via config change.
 
-21. As a first-time user, I want the onboarding to auto-generate the initial security profile from MCP tool schemas, so that I have working rules in minutes instead of days.
+21. As a first-time user, I want the onboarding to auto-generate the initial security profile from tool schemas, so that I have working rules in minutes instead of days.
 
 22. As a first-time user, I want the AI Bootstrap to use a context-rich prompt (domain, regulatory context, risk priorities) so that the generated rules are relevant, not generic.
 
@@ -74,7 +74,7 @@ The decision never leaves local code. Fireworks AI (the hackathon-required LLM s
 
 24. As a first-time user, I want AI Bootstrap output validated for structural correctness before I see it in the Bootstrap Review UI, so that I never approve malformed YAML.
 
-25. As a first-time user, I want the Bootstrap Review UI to show a table of proposed rules with editable fields, so that I can tweak inaccurate values before locking them.
+25. As a first-time user, I want the Bootstrap Review UI to show a table of proposed rules with an editable YAML textarea, so that I can tweak inaccurate values before locking them.
 
 26. As a first-time user, I want unknown tools (not in the config) to fail closed: blocked and escalated to a human, so that no ungoverned action can slip through.
 
@@ -86,7 +86,7 @@ The decision never leaves local code. Fireworks AI (the hackathon-required LLM s
 
 30. As the developer building this, I want a single end-to-end smoke test that sends a real mock tool call through the running gateway and confirms a decision + a SQLite row, so that wiring bugs surface on Day 2-3 instead of Day 5.
 
-31. As the developer building this, I want risk engine integration tests covering all 17 defined scenarios, so that I can refactor with confidence.
+31. As the developer building this, I want risk engine integration tests covering all defined scenarios, so that I can refactor with confidence.
 
 32. As the developer building this, I want an LLM provider abstraction with a mock for testing, so that I can verify prompt structure without needing API access.
 
@@ -96,17 +96,17 @@ The decision never leaves local code. Fireworks AI (the hackathon-required LLM s
 
 ### LLM Provider Abstraction
 
-The LLM integration (explanation layer, AI Bootstrap) is built behind a swappable provider interface. A factory function reads `llm_config.yaml` to select the active provider. Fireworks is the required final target; a fallback provider (e.g., OpenAI) is used during development if Fireworks is unavailable. The cutoff for switching to fallback is end of Day 3 — if Fireworks is not confirmed by then, the submission ships on fallback with the pitch honestly disclosing the situation.
+The LLM integration (explanation layer, AI Bootstrap) is built behind a swappable provider interface (abstract `LLMClient` class). A factory function reads `llm_config.yaml` to select the active provider. Three providers exist: `MockLLMClient` (testing), `FallbackLLMClient` (Groq), and `FireworksLLMClient` (Fireworks AI). The `generate(prompt, output_schema)` method handles both explanation prompts and bootstrap-rules generation (selected via `output_schema["type"]`).
 
-The provider interface exposes a `generate(prompt, schema)` method. Each provider implementation handles its own API structure, authentication from env vars, and response parsing. This lets tests inject a mock provider that verifies prompt structure without any API call.
+For bootstrap generation, the client switches to a longer `max_tokens` limit (800 vs 300 for explanations) and a different system prompt targeting security policy generation.
 
 ### Explicit Trigger Passing to LLM
 
-The explanation layer does not let the LLM infer the reason for a decision. The deterministic engine returns both the decision and the exact trigger string (e.g., `session_pattern:check_balance_send_payment`, `decision_tree:severity_floor`, `policy_violation:amount_threshold`). The LLM prompt includes the trigger string explicitly and instructs the model to explain only that trigger. This prevents hallucination and ensures the explanation never contradicts the factor scores shown on the receipt.
+The explanation layer does not let the LLM infer the reason for a decision. The deterministic engine returns both the decision and the exact trigger string (e.g., `session:pattern_matched:check_balance_send_payment`, `decision_tree:severity_floor`). The LLM prompt includes the trigger string explicitly and instructs the model to explain only that trigger. For weighted_score decisions, the highest-contributing factor is also passed so the LLM names it. This prevents hallucination and ensures the explanation never contradicts the factor scores shown on the receipt.
 
 ### AI Bootstrap Config Generation
 
-The AI Bootstrap reads tool schemas via MCP `tools/list` introspection at first-time setup. A context-rich prompt (hardcoded to fintech domain for the hackathon) is sent to Fireworks, which returns structured JSON. The JSON is converted to nested YAML with the LLM's reasoning comments preserved as YAML comments. Before the output reaches the Bootstrap Review UI, it passes through the same schema validation used for all config files — the human only sees a structurally valid draft.
+The AI Bootstrap reads tool schemas (via MCP `tools/list` introspection or manual JSON input). A context-rich prompt (hardcoded to fintech domain for the hackathon) is sent to the LLM, which returns structured JSON. The JSON is converted to nested YAML with the LLM's reasoning comments preserved as YAML comments. Before the output reaches the Bootstrap Review UI, it passes through the same schema validation used for all config files. After approval, the generated config is written to `policy_config.bootstrap.yaml` and merged at request time — the base `policy_config.yaml` is never overwritten.
 
 ### Session Risk Scorer
 
@@ -115,15 +115,15 @@ Session IDs are auto-generated by the gateway using time-bucketing (`agent_id:ti
 The threshold of 70 is constrained by the Demo Beat 4 script. The two demo-critical severity constants and their provenance are:
 
 ```yaml
-# Severity: 15 — non-financial read operation, no mutation possible
-# Reviewed and locked by human for demo consistency (Beat 4); AI Bootstrap draft was adjusted during review
-check_balance: 15
-# Severity: 50 — sub-threshold payment, below $5,000 policy limit
-# Reviewed and locked by human for demo consistency (Beat 4); AI Bootstrap draft was adjusted during review
-send_payment: 50
+check_balance: 15  # non-financial read operation, no mutation possible
+send_payment: 50   # sub-threshold payment, below $5,000 policy limit
 ```
 
-If either value is adjusted during Days 2-3 iteration, re-run the cumulative threshold table check before rehearsal. Cumulative sums: 3 × check_balance (45) < 70 < 45 + send_payment (95).
+Cumulative sums: 3 × check_balance (45) < 70 < 45 + send_payment (95).
+
+### Generic Fallback for Bootstrap Tools
+
+The severity scorer originally had hardcoded branches for `send_payment`, `delete_file`, `query_database`, and `check_balance`. Bootstrap tools fell through to `return 50.0`. A generic fallback (`_generic_severity`) now processes `max_amount` and `path_pattern` rules for any tool. The policy scorer supports operators `>`, `<`, `>=`, `<=`, `==`, `!=`, `in`, `not_in`, and `matches`.
 
 ### Regulatory Tier Mapping
 
@@ -137,23 +137,24 @@ US financial regimes (FINRA, SEC) are flagged as additional badges where the act
 
 ### Docker Architecture
 
-Three containers:
-1. **gateway** — Python + FastAPI backend, MCP interception, risk engine, AI Bootstrap, Fireworks integration, SQLite, Slack
+Two primary containers:
+1. **gateway** — Python + FastAPI backend, MCP interception, risk engine, AI Bootstrap, LLM integration, SQLite, Slack
 2. **frontend** — React + Vite static build, served via nginx
-3. **local-model** (optional) — Python + PyTorch + ROCm, built only if Day 2 smoke test passes
+
+A third optional `local-model` container (AMD GPU / ROCm) was scoped but not built.
 
 ### Config Files
 
 Three YAML config files:
-1. **policy_config.yaml** — Tool security profiles (risk factors, policy rules). AI Bootstrap generates the initial version; Policy Playground (stretch) edits it live.
+1. **policy_config.yaml** — Base tool security profiles. Never overwritten — bootstrap additions go to `policy_config.bootstrap.yaml` and merge at request time.
 2. **risky_sequences.yaml** — Ordered pair patterns for session risk scoring.
 3. **regulatory_mapping.yaml** — EU AI Act tier triggers and US regime rules.
 
-All configs are validated against a schema on load. Malformed configs raise explicit errors rather than silently falling back to defaults.
+All configs are validated against a schema on load.
 
 ### Unknown Tool Handling
 
-Any tool call for a tool not in `policy_config.yaml` is blocked immediately and escalated to a human. No default rules are applied — an unknown tool means an explicit decision is required.
+Any tool call for a tool not in the merged tools dict (base config + bootstrap file) is blocked immediately and escalated to a human. Bootstrap-approved tools are merged into the known-tool set at request time — the base config is never modified.
 
 ---
 
@@ -162,7 +163,7 @@ Any tool call for a tool not in `policy_config.yaml` is blocked immediately and 
 ### Six Testing Seams
 
 **Seam 1 — Risk Engine Integration Tests (HIGHEST PRACTICAL SEAM)**
-Feed a complete action input through all six factors + session scorer + decision-tree floor. Assert the final decision and trigger string are correct. Covers all 17 defined scenarios. This is the primary correctness assertion for the core product.
+Feed a complete action input through all six factors + session scorer + decision-tree floor. Assert the final decision and trigger string are correct. Covers all defined scenarios. This is the primary correctness assertion for the core product.
 
 **Seam 2 — Deterministic Factor Unit Tests**
 Pure function tests for each factor in isolation. Fast, TDD-friendly, catches factor-level bugs before integration.
@@ -174,20 +175,20 @@ Inject a mock LLM provider. Verify that the prompt sent to the provider includes
 Feed action histories with known session boundaries and sequences. Verify session bucketing, ordered pair matching (both match and no-match cases), and cumulative severity sum.
 
 **Seam 5 — Config Validation + AI Bootstrap Output Validation + Unacceptable Risk Guard**
-Parse all three YAML configs and verify schema compliance. Additionally, after AI Bootstrap's `yaml_writer.py` produces a config, run it through the same schema validation before surfacing to the Bootstrap Review UI. This prevents "looked fine in the table but YAML parser breaks" failures.
+Parse all three YAML configs and verify schema compliance. Additionally, after AI Bootstrap output is produced, run it through the same schema validation before surfacing to the Bootstrap Review UI. This prevents "looked fine in the table but YAML parser breaks" failures.
 
-Includes one regression-style guard: feed the regulatory mapper every extreme/edge-case input (severity 100, data_sensitivity 100, unsigned tool + high severity, all combinations) and assert none produce `unacceptable_risk` unless the action_type is literally one of the four Article 5 prohibited practices. This prevents the exact mistake already made once in Test Scenario #16.
+Includes one regression-style guard: feed the regulatory mapper every extreme/edge-case input (severity 100, data_sensitivity 100, unsigned tool + high severity, all combinations) and assert none produce `unacceptable_risk` unless the action_type is literally one of the four Article 5 prohibited practices.
 
 **Seam 6 — End-to-End Smoke Test**
-One real mock tool call through the actual running gateway (FastAPI routes, MCP interception, request/response serialization, SQLite write). Three variants: one approve path, one escalate path, one block path. Not comprehensive — just one wire-check per critical outcome, so integration/wiring bugs surface on Day 2-3 instead of Day 5.
+One real mock tool call through the actual running gateway (FastAPI routes, request/response serialization, SQLite write). Three variants: one approve path, one escalate path, one block path. Monitored via Live API Verification tests that call the real gateway + real LLM and assert real responses.
+
+### Live Verification Pattern
+
+Every feature follows the same cycle: build → claim done → manually verify live → bug found → fix → re-verify. This pattern caught: stale session history leaking, missing top_factor in LLM prompts, incorrect Slack risk-score labels, YAML quoting failures with regex patterns, and the FallbackLLMClient silently returning empty bootstrap rules. The Live API Verification suite (`tests/test_live_api_verification.py`) encodes these scenarios as automated tests.
 
 ### What makes a good test
 
 A good test asserts external behavior, not implementation details. It feeds inputs in (action type, parameters, session context, tool trust tier) and asserts outputs out (decision, trigger string, factor scores, regulatory tag, SQLite row count). Tests that assert which internal function was called or what the config object looked like mid-pipeline are too brittle for a 5-day build.
-
-### Prior art
-
-No existing tests in this repo — all test infrastructure is new.
 
 ---
 
@@ -201,12 +202,13 @@ No existing tests in this repo — all test infrastructure is new.
 - **Localization/i18n.** English-only UI.
 - **CI/CD pipeline.** Not needed for a 5-day hackathon.
 - **Certified legal compliance.** The regulatory mapping is explicitly informational and disclaimed as not guaranteeing legal or regulatory compliance.
+- **MCP wrapper.** Scoped for post-hackathon.
 
 ---
 
 ## Further Notes
 
-- Fireworks API access is not yet confirmed. Development proceeds with a fallback LLM provider until end of Day 3, at which point the decision is made: if Fireworks works, ship on Fireworks; if not, ship on fallback with honest disclosure and Fireworks-ready config ready to flip.
-- The AMD Developer Cloud ROCm access is delayed to Day 2 (July 7). The local model upgrade is strictly optional — the statistical anomaly scorer is the real, always-on default.
-- The demo flow is designed around 4-6 beats: problem statement, low-risk approval, high-risk escalation, session-pattern escalation (the differentiator), and optionally untrusted-tool block + AI Bootstrap live generation.
+- Two LLM providers are integrated: Groq (`llama-3.3-70b-versatile`) and Fireworks (`llama-v3p3-70b-instruct`). Switch via `provider:` in `engine/llm_config.yaml`. Both require an API key in `.env`.
+- Groq free tier has a 100K token/day limit — switch to Fireworks for higher throughput during demo/rehearsal.
+- The demo flow has two parts: **Beat 4** (3× check_balance → send_payment, demonstrating session pattern matching) and **Bootstrap** (3 acts: fail-closed → introspect/approve → live enforcement). Total runtime ~4 minutes.
 - The session-risk correlation is the primary differentiator and should be foregrounded in the pitch. The six-factor score and regulatory tagging are supporting depth.
