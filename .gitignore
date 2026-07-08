@@ -7,3 +7,6 @@ frontend/dist/
 data/
 .env
 ralph/
+.env
+AGENTS.md
+docs/agents/
