@@ -3,6 +3,7 @@ import tempfile
 from pathlib import Path
 
 from engine.audit import AuditStore
+from datetime import datetime, timezone, timedelta
 
 
 class TestAuditStore:
@@ -129,6 +130,60 @@ class TestAuditStore:
         history = self.store.get_history("nonexistent")
         assert history == []
 
+    def test_agent_id_column_exists(self):
+        proxy = self.store._conn.execute(
+            "PRAGMA table_info(decisions)"
+        ).fetchall()
+        cols = {r["name"] for r in proxy}
+        assert "agent_id" in cols, f"Expected agent_id column, got {cols}"
+
+    def test_agent_id_index_exists(self):
+        indexes = self.store._conn.execute(
+            "PRAGMA index_list(decisions)"
+        ).fetchall()
+        names = {r["name"] for r in indexes}
+        assert "idx_decisions_agent" in names
+
+    def test_append_stores_agent_id(self):
+        entry = {
+            "decision": "approved",
+            "action_type": "send_payment",
+            "agent_id": "agent_alpha",
+        }
+        self.store.append(entry, agent_id="agent_alpha")
+        row = self.store._conn.execute(
+            "SELECT agent_id FROM decisions WHERE id = ?", (1,)
+        ).fetchone()
+        assert row["agent_id"] == "agent_alpha"
+
+    def test_get_agent_recent_history_all_unbounded(self):
+        self.store.append({"decision": "approved", "action_type": "send_payment"}, agent_id="agent_1")
+        self.store.append({"decision": "approved", "action_type": "check_balance"}, agent_id="agent_1")
+        history = self.store.get_agent_recent_history("agent_1", window_minutes=None)
+        assert len(history) == 2
+        assert all(h["agent_id"] == "agent_1" for h in history)
+
+    def test_get_agent_recent_history_windowed(self):
+        from datetime import datetime, timezone, timedelta
+        old_ts = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        recent_ts = datetime.now(timezone.utc).isoformat()
+        self.store.append({
+            "decision": "approved", "action_type": "send_payment", "timestamp": old_ts
+        }, agent_id="agent_1")
+        self.store.append({
+            "decision": "approved", "action_type": "check_balance", "timestamp": recent_ts
+        }, agent_id="agent_1")
+        history = self.store.get_agent_recent_history("agent_1", window_minutes=30)
+        assert len(history) == 1
+        assert history[0]["action_type"] == "check_balance"
+
+    def test_get_agent_recent_history_other_agent_excluded(self):
+        self.store.append({"decision": "approved", "action_type": "send_payment"}, agent_id="agent_1")
+        self.store.append({"decision": "approved", "action_type": "delete_file"}, agent_id="agent_2")
+        history = self.store.get_agent_recent_history("agent_1")
+        assert len(history) == 1
+        assert history[0]["action_type"] == "send_payment"
+
     def test_get_history_limited_to_recent_entries(self):
         for i in range(5):
             self.store.append({
@@ -139,3 +194,66 @@ class TestAuditStore:
 
         history = self.store.get_history("send_payment", limit=3)
         assert len(history) == 3
+
+
+class TestSessionLifecycle:
+    def setup_method(self):
+        self.tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self.store = AuditStore(self.tmp.name)
+
+    def teardown_method(self):
+        self.store.close()
+        Path(self.tmp.name).unlink()
+
+    def test_create_session_returns_uuid(self):
+        sid = self.store.create_session("agent_1")
+        assert isinstance(sid, str)
+        assert len(sid) > 20
+
+    def test_get_session_returns_none_for_unknown(self):
+        session = self.store.get_session("nonexistent")
+        assert session is None
+
+    def test_get_session_returns_created_session(self):
+        sid = self.store.create_session("agent_1")
+        session = self.store.get_session(sid)
+        assert session is not None
+        assert session["id"] == sid
+        assert session["agent_id"] == "agent_1"
+        assert session["status"] == "active"
+        assert session["closed_at"] is None
+
+    def test_create_and_close_session(self):
+        sid = self.store.create_session("agent_1")
+        self.store.close_session(sid)
+        session = self.store.get_session(sid)
+        assert session["status"] == "active"
+        assert session["closed_at"] is not None
+
+    def test_list_active_sessions_empty_for_new_agent(self):
+        active = self.store.list_active_sessions("unknown_agent")
+        assert active == []
+
+    def test_list_active_sessions_returns_only_active(self):
+        sid1 = self.store.create_session("agent_1")
+        sid2 = self.store.create_session("agent_1")
+        self.store.close_session(sid1)
+        active = self.store.list_active_sessions("agent_1")
+        assert len(active) == 1
+        assert active[0]["id"] == sid2
+
+    def test_concurrent_sessions_allowed(self):
+        sid1 = self.store.create_session("agent_1")
+        sid2 = self.store.create_session("agent_1")
+        active = self.store.list_active_sessions("agent_1")
+        assert len(active) == 2
+
+    def test_sessions_scoped_by_agent(self):
+        sid1 = self.store.create_session("agent_1")
+        sid2 = self.store.create_session("agent_2")
+        active_1 = self.store.list_active_sessions("agent_1")
+        active_2 = self.store.list_active_sessions("agent_2")
+        assert len(active_1) == 1
+        assert len(active_2) == 1
+        assert active_1[0]["id"] == sid1
+        assert active_2[0]["id"] == sid2

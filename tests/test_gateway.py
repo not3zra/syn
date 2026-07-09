@@ -409,3 +409,104 @@ def test_intercept_simulation_no_execution(monkeypatch):
         data = resp.json()
         assert data["decision"] == "approved"
         assert data["execution"] is None
+
+
+class TestSessionLifecycle:
+    def _make_client(self, tmpdir, monkeypatch):
+        import importlib
+        from pathlib import Path
+        from fastapi.testclient import TestClient
+        from engine.llm import MockLLMClient
+        db_path = Path(tmpdir) / "test.db"
+        monkeypatch.setenv("SYN_AUDIT_DB_PATH", str(db_path))
+        from gateway import main as gateway_main
+        importlib.reload(gateway_main)
+        monkeypatch.setattr(gateway_main, "LLM_CLIENT", MockLLMClient())
+        return TestClient(gateway_main.app)
+
+    def test_start_session_returns_uuid(self, tmpdir, monkeypatch):
+        c = self._make_client(tmpdir, monkeypatch)
+        payload = {
+            "action_type": "send_payment",
+            "parameters": {"amount": 50, "recipient": "alice"},
+            "session_intent": "start",
+        }
+        resp = c.post("/intercept", json=payload)
+        data = resp.json()
+        assert len(data["session_data"]["session_id"]) > 20
+
+    def test_continue_with_valid_session(self, tmpdir, monkeypatch):
+        c = self._make_client(tmpdir, monkeypatch)
+        start_resp = c.post("/intercept", json={
+            "action_type": "send_payment",
+            "parameters": {"amount": 50, "recipient": "alice"},
+            "session_intent": "start",
+        })
+        session_id = start_resp.json()["session_data"]["session_id"]
+
+        continue_resp = c.post("/intercept", json={
+            "action_type": "check_balance",
+            "parameters": {},
+            "session_intent": "continue",
+            "session_id": session_id,
+        })
+        data = continue_resp.json()
+        assert data["session_data"]["session_id"] == session_id
+
+    def test_unknown_continue_falls_back_to_timebucket(self, tmpdir, monkeypatch):
+        c = self._make_client(tmpdir, monkeypatch)
+        resp = c.post("/intercept", json={
+            "action_type": "send_payment",
+            "parameters": {"amount": 50, "recipient": "alice"},
+            "session_intent": "continue",
+            "session_id": "nonexistent-uuid",
+        })
+        data = resp.json()
+        assert "session:fallback_timebucket" in data["trigger"]
+
+    def test_end_session_closes_it(self, tmpdir, monkeypatch):
+        c = self._make_client(tmpdir, monkeypatch)
+        start_resp = c.post("/intercept", json={
+            "action_type": "send_payment",
+            "parameters": {"amount": 50, "recipient": "alice"},
+            "session_intent": "start",
+        })
+        session_id = start_resp.json()["session_data"]["session_id"]
+
+        c.post("/intercept", json={
+            "action_type": "check_balance",
+            "parameters": {},
+            "session_intent": "end",
+            "session_id": session_id,
+        })
+
+        continue_resp = c.post("/intercept", json={
+            "action_type": "send_payment",
+            "parameters": {"amount": 50, "recipient": "alice"},
+            "session_intent": "continue",
+            "session_id": session_id,
+        })
+        assert "session:fallback_timebucket" in continue_resp.json()["trigger"]
+
+    def test_concurrent_sessions_allowed(self, tmpdir, monkeypatch):
+        c = self._make_client(tmpdir, monkeypatch)
+        sid1 = c.post("/intercept", json={
+            "action_type": "send_payment",
+            "parameters": {"amount": 50, "recipient": "alice"},
+            "session_intent": "start",
+        }).json()["session_data"]["session_id"]
+        sid2 = c.post("/intercept", json={
+            "action_type": "check_balance",
+            "parameters": {},
+            "session_intent": "start",
+        }).json()["session_data"]["session_id"]
+        assert sid1 != sid2
+
+    def test_no_intent_uses_timebucket(self, tmpdir, monkeypatch):
+        c = self._make_client(tmpdir, monkeypatch)
+        resp = c.post("/intercept", json={
+            "action_type": "send_payment",
+            "parameters": {"amount": 50, "recipient": "alice"},
+        })
+        sid = resp.json()["session_data"]["session_id"]
+        assert ":" in sid  # time-bucket format agent:bucket

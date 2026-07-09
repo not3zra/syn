@@ -103,6 +103,8 @@ class ToolCallRequest(BaseModel):
     parameters: dict
     agent_id: str = "default"
     mode: str = "live"
+    session_intent: str | None = None
+    session_id: str | None = None
 
 
 class DecisionResponse(BaseModel):
@@ -208,15 +210,33 @@ def list_timeline(outcome: str | None = Query(None)):
 @app.post("/intercept")
 def intercept(req: ToolCallRequest) -> DecisionResponse:
     AUDIT_STORE.expire_old()
+    trigger_note = None
     session_id = generate_session_id(req.agent_id, int(time.time()))
+
+    if req.session_intent == "start":
+        session_id = AUDIT_STORE.create_session(req.agent_id)
+    elif req.session_intent == "continue":
+        session = AUDIT_STORE.get_session(req.session_id) if req.session_id else None
+        if session and session.get("status") == "active" and session.get("closed_at") is None:
+            session_id = session["id"]
+        else:
+            trigger_note = "session:fallback_timebucket"
+    elif req.session_intent == "end":
+        if req.session_id:
+            AUDIT_STORE.close_session(req.session_id)
+
     is_simulation = req.mode == "simulation"
     now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
     merged_tools = _get_merged_tools()
     if req.action_type not in merged_tools:
+        trigger = "gateway:unknown_tool"
+        if trigger_note:
+            trigger = f"{trigger_note}+{trigger}"
+        final_trigger = trigger
         resp = DecisionResponse(
             decision="blocked",
-            trigger="gateway:unknown_tool",
+            trigger=trigger,
             factor_scores={
                 "severity": 0,
                 "policy": 100,
@@ -274,10 +294,14 @@ def intercept(req: ToolCallRequest) -> DecisionResponse:
                 contributions[factor] = raw.get(factor, 0) * w
         top_factor = max(contributions, key=contributions.get)
 
+    final_trigger = result.trigger
+    if trigger_note:
+        final_trigger = f"{trigger_note}+{final_trigger}"
+
     prompt = build_explanation_prompt(
         action_type=req.action_type,
         decision=result.decision.value,
-        trigger=result.trigger,
+        trigger=final_trigger,
         factor_scores=result.factor_scores.to_dict(),
         top_factor=top_factor,
     )
@@ -285,7 +309,7 @@ def intercept(req: ToolCallRequest) -> DecisionResponse:
 
     resp = DecisionResponse(
         decision=result.decision.value,
-        trigger=result.trigger,
+        trigger=final_trigger,
         factor_scores=result.factor_scores.to_dict(),
         session_data=result.session_data.to_dict(),
         regulatory_tier=result.regulatory_tier,
