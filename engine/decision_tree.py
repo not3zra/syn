@@ -8,6 +8,7 @@ def apply_decision_tree(
 
     severity_floor = decision_tree_thresholds.get("severity_floor", 90)
     confidence_floor = decision_tree_thresholds.get("confidence_floor", 40)
+    data_sensitivity_floor = decision_tree_thresholds.get("data_sensitivity_floor", 70)
 
     if factor_scores.severity > severity_floor:
         return Decision.BLOCKED, "decision_tree:severity_floor"
@@ -17,6 +18,9 @@ def apply_decision_tree(
 
     if factor_scores.confidence < confidence_floor:
         return Decision.ESCALATED, "decision_tree:confidence_floor"
+
+    if factor_scores.data_sensitivity >= data_sensitivity_floor:
+        return Decision.ESCALATED, "decision_tree:data_sensitivity_floor"
 
     return None, None
 

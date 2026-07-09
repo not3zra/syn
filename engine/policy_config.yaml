@@ -97,6 +97,7 @@ thresholds:
 decision_tree:
   severity_floor: 90.0
   confidence_floor: 40.0
+  data_sensitivity_floor: 70.0
 
 weights:
   severity: 0.30

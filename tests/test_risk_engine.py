@@ -47,21 +47,22 @@ def test_block_policy_violation():
 
 
 def test_escalate_low_confidence():
+    history = [{"action_type": "check_balance", "parameters": {}}]
     result = evaluate(
         action_type="delete_file",
-        parameters={"file_path": "/tmp/customers.xlsx"},
-        session_context={"history": [], "session_id": None},
+        parameters={"file_path": "/tmp/notes.txt"},
+        session_context={"history": history, "session_id": None},
         config=CONFIG,
     )
     assert result.decision == Decision.ESCALATED
-    assert "weighted_score" in result.trigger
+    assert "confidence_floor" in result.trigger
 
 
 def test_escalate_weighted_score():
     history = [{"action_type": "delete_file", "parameters": {"file_path": "/tmp/test.txt"}} for _ in range(5)]
     result = evaluate(
         action_type="delete_file",
-        parameters={"file_path": "/tmp/customers.xlsx"},
+        parameters={"file_path": "/data/prod/foo.xlsx"},
         session_context={"history": history, "session_id": None},
         config=CONFIG,
     )
@@ -82,14 +83,25 @@ def test_block_via_severity_floor():
 
 
 def test_approve_query_database_select():
-    history = [{"action_type": "query_database", "parameters": {"query": "SELECT * FROM users"}} for _ in range(5)]
+    history = [{"action_type": "query_database", "parameters": {"query": "SELECT 1"}} for _ in range(5)]
     result = evaluate(
         action_type="query_database",
-        parameters={"query": "SELECT id, name FROM users WHERE id = 1"},
+        parameters={"query": "SELECT 1"},
         session_context={"history": history, "session_id": None},
         config=CONFIG,
     )
     assert result.decision == Decision.APPROVED
+
+
+def test_escalate_query_database_pii():
+    result = evaluate(
+        action_type="query_database",
+        parameters={"query": "SELECT * FROM users"},
+        session_context={"history": [], "session_id": None},
+        config=CONFIG,
+    )
+    assert result.decision == Decision.ESCALATED
+    assert result.trigger == "decision_tree:data_sensitivity_floor"
 
 
 def test_block_destructive_query():
