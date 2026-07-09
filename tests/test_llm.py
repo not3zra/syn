@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from engine.llm import (
     LLMClient,
     MockLLMClient,
@@ -105,15 +107,29 @@ class TestFactory:
         assert isinstance(client, MockLLMClient)
         assert isinstance(client, LLMClient)
 
-    def test_creates_fallback_client(self):
+    def test_creates_fallback_client_with_key(self, monkeypatch):
+        monkeypatch.setenv("GROQ_API_KEY", "test-key")
         config = {"provider": "fallback"}
+        client = create_llm_client(config)
+        assert isinstance(client, LLMClient)
+
+    def test_fallback_raises_on_missing_key(self):
+        config = {"provider": "fallback"}
+        with pytest.raises(ValueError, match="GROQ_API_KEY"):
+            create_llm_client(config)
+
+    def test_fireworks_raises_on_missing_key(self):
+        config = {"provider": "fireworks"}
+        with pytest.raises(ValueError, match="FIREWORKS_API_KEY"):
+            create_llm_client(config)
+
+    def test_fireworks_with_key_succeeds(self, monkeypatch):
+        monkeypatch.setenv("FIREWORKS_API_KEY", "test-key")
+        config = {"provider": "fireworks"}
         client = create_llm_client(config)
         assert isinstance(client, LLMClient)
 
     def test_raises_on_unknown_provider(self):
         config = {"provider": "nonexistent"}
-        try:
+        with pytest.raises(ValueError, match="Unknown LLM provider"):
             create_llm_client(config)
-            assert False, "Should have raised"
-        except ValueError:
-            pass

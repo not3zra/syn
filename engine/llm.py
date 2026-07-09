@@ -365,13 +365,27 @@ def create_llm_client(config: dict[str, Any]) -> LLMClient:
 
     if provider == "mock":
         return MockLLMClient()
+
     if provider in ("fallback", "groq"):
+        key = config.get("api_key") or os.environ.get("GROQ_API_KEY") or os.environ.get("OPENAI_API_KEY")
+        if not key:
+            raise ValueError(
+                "GROQ_API_KEY or OPENAI_API_KEY is required for 'fallback'/'groq' LLM provider. "
+                "Set the required environment variable or switch provider to 'mock'."
+            )
         return FallbackLLMClient(
             api_key=config.get("api_key"),
             base_url=config.get("base_url", "https://api.groq.com/openai/v1"),
             model=config.get("model", "llama-3.3-70b-versatile"),
         )
+
     if provider == "fireworks":
+        key = config.get("api_key") or os.environ.get("FIREWORKS_API_KEY") or os.environ.get("OPENAI_API_KEY")
+        if not key:
+            raise ValueError(
+                "FIREWORKS_API_KEY or OPENAI_API_KEY is required for 'fireworks' LLM provider. "
+                "Set the required environment variable or switch provider to 'mock'."
+            )
         return FireworksLLMClient(
             api_key=config.get("api_key"),
             base_url=config.get("base_url", "https://api.fireworks.ai/inference/v1"),
