@@ -1,3 +1,10 @@
+def _to_float(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def score_anomaly(
     action_type: str, parameters: dict, config: dict, history: list | None = None
 ) -> float:
@@ -11,14 +18,14 @@ def score_anomaly(
         v
         for h in history
         if h.get("action_type") == action_type
-        for v in [h.get("parameters", {}).get("amount")]
+        for v in [_to_float(h.get("parameters", {}).get("amount"))]
         if v is not None
     ]
     if len(amounts) < 2:
         return 5.0
 
-    current = parameters.get("amount", 0)
-    if not current:
+    current = _to_float(parameters.get("amount"))
+    if current is None:
         return 5.0
 
     mean = sum(amounts) / len(amounts)

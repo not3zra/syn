@@ -40,9 +40,15 @@ def score_severity(action_type: str, parameters: dict, config: dict) -> float:
     rules = tool_config.get("severity_rules", [])
 
     if action_type == "send_payment":
-        amount = parameters.get("amount", 0)
-        if amount is None:
-            amount = 0
+        amount_raw = parameters.get("amount")
+        try:
+            amount = float(amount_raw) if amount_raw is not None else None
+        except (TypeError, ValueError):
+            amount = None
+        # A payment with a missing, non-numeric, or non-positive amount
+        # is invalid and must never be auto-approved.
+        if amount is None or amount <= 0:
+            return 95.0
         for rule in rules:
             max_amt = rule.get("max_amount")
             if max_amt is None:

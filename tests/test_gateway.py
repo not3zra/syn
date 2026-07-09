@@ -169,6 +169,81 @@ def test_intercept_send_payment():
     assert_valid_decision_response(response.json(), "send_payment")
 
 
+def _isolated_client(tmp_path, monkeypatch):
+    import importlib
+    from pathlib import Path
+    from fastapi.testclient import TestClient
+    from engine.llm import MockLLMClient
+    from gateway import main as gateway_main
+
+    db_path = Path(tmp_path) / "test.db"
+    monkeypatch.setenv("SYN_AUDIT_DB_PATH", str(db_path))
+    importlib.reload(gateway_main)
+    monkeypatch.setattr(gateway_main, "LLM_CLIENT", MockLLMClient())
+    return TestClient(gateway_main.app)
+
+
+def test_send_payment_negative_amount_blocked(tmp_path, monkeypatch):
+    c = _isolated_client(tmp_path, monkeypatch)
+    payload = {
+        "action_type": "send_payment",
+        "parameters": {"amount": -100, "recipient": "alice"},
+        "agent_id": "neg-1",
+    }
+    response = c.post("/intercept", json=payload)
+    assert response.status_code == 200
+    assert response.json()["decision"] == "blocked"
+
+
+def test_send_payment_missing_amount_blocked(tmp_path, monkeypatch):
+    c = _isolated_client(tmp_path, monkeypatch)
+    payload = {
+        "action_type": "send_payment",
+        "parameters": {},
+        "agent_id": "miss-1",
+    }
+    response = c.post("/intercept", json=payload)
+    assert response.status_code == 200
+    assert response.json()["decision"] == "blocked"
+
+
+def test_send_payment_zero_amount_blocked(tmp_path, monkeypatch):
+    c = _isolated_client(tmp_path, monkeypatch)
+    payload = {
+        "action_type": "send_payment",
+        "parameters": {"amount": 0, "recipient": "alice"},
+        "agent_id": "zero-1",
+    }
+    response = c.post("/intercept", json=payload)
+    assert response.status_code == 200
+    assert response.json()["decision"] == "blocked"
+
+
+def test_send_payment_non_numeric_amount_blocked(tmp_path, monkeypatch):
+    c = _isolated_client(tmp_path, monkeypatch)
+    payload = {
+        "action_type": "send_payment",
+        "parameters": {"amount": "not-a-number", "recipient": "alice"},
+        "agent_id": "nan-1",
+    }
+    # Must not crash; invalid amount is blocked, not silently approved.
+    response = c.post("/intercept", json=payload)
+    assert response.status_code == 200
+    assert response.json()["decision"] == "blocked"
+
+
+def test_send_payment_positive_amount_not_blocked(tmp_path, monkeypatch):
+    c = _isolated_client(tmp_path, monkeypatch)
+    payload = {
+        "action_type": "send_payment",
+        "parameters": {"amount": 100, "recipient": "alice"},
+        "agent_id": "pos-1",
+    }
+    response = c.post("/intercept", json=payload)
+    assert response.status_code == 200
+    assert response.json()["decision"] != "blocked"
+
+
 def test_intercept_delete_file():
     payload = {
         "action_type": "delete_file",
