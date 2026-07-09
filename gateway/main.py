@@ -7,7 +7,7 @@ from typing import Any
 
 import yaml
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, FastAPI, Query
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
 from pydantic import BaseModel
 
 load_dotenv()
@@ -136,6 +136,26 @@ class BootstrapApproveRequest(BaseModel):
     target_path: str | None = None
 
 
+def _sanitize_bootstrap_path(target_path: str | None, config_path: Path) -> Path:
+    """Validate and resolve a bootstrap target path, preventing directory traversal.
+
+    Relative paths are resolved against config_path's parent directory.
+    Absolute paths must resolve inside the config directory.
+    """
+    base_dir = config_path.parent.resolve()
+    if target_path is None:
+        return config_path.with_suffix(".bootstrap.yaml")
+    candidate = (base_dir / target_path).resolve()
+    try:
+        candidate.relative_to(base_dir)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Path traversal detected: '{target_path}' is outside the allowed base directory '{base_dir}'",
+        )
+    return candidate
+
+
 def _background_bootstrap_generate(tool_name: str, parameters: dict):
     """Background task: generate bootstrap rules for an unknown tool and store as pending."""
     try:
@@ -204,7 +224,7 @@ def bootstrap_approve(req: BootstrapApproveRequest):
     errors = validate_generated_yaml(req.yaml_content)
     if errors:
         return {"success": False, "errors": errors}
-    target = Path(req.target_path) if req.target_path else config_path.with_suffix(".bootstrap.yaml")
+    target = _sanitize_bootstrap_path(req.target_path, config_path)
     write_policy_config(req.yaml_content, target)
     return {"success": True, "path": str(target)}
 

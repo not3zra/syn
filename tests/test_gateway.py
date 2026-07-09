@@ -125,7 +125,7 @@ def test_bootstrap_introspect_rules_have_structure(monkeypatch):
     assert "reasoning" in rule
 
 
-def test_bootstrap_approve_valid_yaml(tmp_path):
+def test_bootstrap_approve_valid_yaml():
     yaml_content = """tools:
   send_payment:
     severity_rules:
@@ -135,12 +135,10 @@ def test_bootstrap_approve_valid_yaml(tmp_path):
     data_sensitivity_rules: []
     tool_trust_tier: official
     anomaly_lookback: 20"""
-    target = str(tmp_path / "test_policy.yaml")
-    response = client.post("/bootstrap/approve", json={"yaml_content": yaml_content, "target_path": target})
+    response = client.post("/bootstrap/approve", json={"yaml_content": yaml_content})
     assert response.status_code == 200
     data = response.json()
     assert data["success"] is True
-    assert data["path"] == target
 
 
 def test_bootstrap_approve_invalid_yaml():
@@ -152,6 +150,37 @@ def test_bootstrap_approve_invalid_yaml():
     data = response.json()
     assert data["success"] is False
     assert len(data["errors"]) > 0
+
+
+_YAML_CONTENT = """tools:
+  test_tool:
+    severity_rules:
+      - max_amount: 100
+        score: 10
+    policy_rules: []
+    data_sensitivity_rules: []
+    tool_trust_tier: official
+    anomaly_lookback: 10"""
+
+
+def test_bootstrap_approve_path_traversal_rejected():
+    """Path traversal via target_path should return 400."""
+    response = client.post("/bootstrap/approve", json={
+        "yaml_content": _YAML_CONTENT,
+        "target_path": "../../etc/passwd",
+    })
+    assert response.status_code == 400
+
+
+def test_bootstrap_approve_default_path():
+    """Null target_path should write to default location."""
+    response = client.post("/bootstrap/approve", json={
+        "yaml_content": _YAML_CONTENT,
+    })
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert "policy_config.bootstrap.yaml" in data["path"]
 
 
 def test_intercept_simulation_returns_valid():
