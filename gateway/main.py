@@ -4,6 +4,7 @@ import logging
 import os
 import time
 import uuid
+from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar
 from datetime import datetime, timezone, timedelta
@@ -123,6 +124,30 @@ app = FastAPI(title="syn-gateway")
 
 _THREAD_POOL = ThreadPoolExecutor(max_workers=4)
 
+_RATE_LIMIT = int(os.environ.get("SYN_RATE_LIMIT", "100"))
+_RATE_WINDOW = int(os.environ.get("SYN_RATE_WINDOW_SECONDS", "60"))
+
+
+class _RateLimiter:
+    def __init__(self, max_requests: int, window_seconds: int):
+        self.max_requests = max_requests
+        self.window_seconds = window_seconds
+        self._buckets: dict[str, deque] = defaultdict(deque)
+
+    def check(self, ip: str) -> bool:
+        now = time.monotonic()
+        bucket = self._buckets[ip]
+        while bucket and bucket[0] < now - self.window_seconds:
+            bucket.popleft()
+        if len(bucket) >= self.max_requests:
+            return False
+        bucket.append(now)
+        return True
+
+
+_rate_limiter = _RateLimiter(_RATE_LIMIT, _RATE_WINDOW)
+
+
 _ALLOW_ORIGINS = os.environ.get("SYN_ALLOW_ORIGINS", "*").split(",")
 app.add_middleware(
     CORSMiddleware,
@@ -157,6 +182,31 @@ async def _add_request_id(request: Request, call_next):
         return response
     finally:
         _request_id_var.reset(token)
+
+
+EXCLUDED_RATE_LIMIT_PATHS = {"/health"}
+
+
+@app.middleware("http")
+async def _rate_limit(request: Request, call_next):
+    if request.url.path not in EXCLUDED_RATE_LIMIT_PATHS:
+        ip = _client_ip(request)
+        if not _rate_limiter.check(ip):
+            return JSONResponse(
+                status_code=429,
+                content={"detail": f"Rate limit exceeded: {_RATE_LIMIT} requests per {_RATE_WINDOW}s"},
+            )
+    return await call_next(request)
+
+
+def _client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    real_ip = request.headers.get("x-real-ip")
+    if real_ip:
+        return real_ip.strip()
+    return request.client.host if request.client else "unknown"
 
 
 class ToolCallRequest(BaseModel):

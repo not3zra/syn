@@ -40,6 +40,55 @@ def test_health_returns_ok():
     assert response.json() == {"status": "ok"}
 
 
+def test_health_excluded_from_rate_limit():
+    for _ in range(200):
+        response = client.get("/health")
+        assert response.status_code == 200
+
+
+def _patch_rate_limit(monkeypatch, limit, window=60):
+    from gateway import main as gateway_main
+    from engine.llm import MockLLMClient
+    monkeypatch.setattr(gateway_main, "LLM_CLIENT", MockLLMClient())
+    monkeypatch.setattr(gateway_main, "_RATE_LIMIT", limit)
+    monkeypatch.setattr(gateway_main, "_RATE_WINDOW", window)
+    limiter = gateway_main._RateLimiter(limit, window)
+    monkeypatch.setattr(gateway_main, "_rate_limiter", limiter)
+    return gateway_main
+
+
+def test_rate_limit_exceeded(monkeypatch):
+    _patch_rate_limit(monkeypatch, limit=5)
+
+    payload = {"action_type": "send_payment", "parameters": {"amount": 100}}
+    for _ in range(5):
+        response = client.post("/intercept", json=payload)
+        assert response.status_code == 200
+    response = client.post("/intercept", json=payload)
+    assert response.status_code == 429
+
+
+def test_rate_limit_per_ip_isolation(monkeypatch):
+    _patch_rate_limit(monkeypatch, limit=1)
+
+    payload = {"action_type": "send_payment", "parameters": {"amount": 100}}
+    # Each distinct IP gets its own allowance even with a limit of 1
+    assert client.post("/intercept", json=payload, headers={"X-Forwarded-For": "1.1.1.1"}).status_code == 200
+    assert client.post("/intercept", json=payload, headers={"X-Forwarded-For": "2.2.2.2"}).status_code == 200
+    # Same IP exceeds the limit
+    assert client.post("/intercept", json=payload, headers={"X-Forwarded-For": "1.1.1.1"}).status_code == 429
+
+
+def test_rate_limit_configurable_via_env(monkeypatch):
+    _patch_rate_limit(monkeypatch, limit=3)
+
+    payload = {"action_type": "send_payment", "parameters": {"amount": 100}}
+    for _ in range(3):
+        assert client.post("/intercept", json=payload).status_code == 200
+    # 4th exceeds the configured limit of 3
+    assert client.post("/intercept", json=payload).status_code == 429
+
+
 def test_request_id_in_response():
     payload = {"action_type": "send_payment", "parameters": {"amount": 100}}
     response = client.post("/intercept", json=payload)
