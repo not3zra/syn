@@ -40,6 +40,18 @@ def test_health_returns_ok():
     assert response.json() == {"status": "ok"}
 
 
+def test_body_size_limit_exceeded():
+    large_payload = {"action_type": "x" * (1024 * 1024 + 1)}
+    response = client.post("/intercept", json=large_payload)
+    assert response.status_code == 413
+
+
+def test_body_size_limit_normal_succeeds():
+    payload = {"action_type": "send_payment", "parameters": {"amount": 100}}
+    response = client.post("/intercept", json=payload)
+    assert response.status_code == 200
+
+
 def test_intercept_send_payment():
     payload = {
         "action_type": "send_payment",

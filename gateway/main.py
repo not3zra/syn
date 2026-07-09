@@ -7,7 +7,8 @@ from typing import Any
 
 import yaml
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 load_dotenv()
@@ -97,6 +98,19 @@ SLACK_WEBHOOK_URL = os.environ.get("SYN_SLACK_WEBHOOK_URL")
 SLACK_NOTIFIER = SlackNotifier(webhook_url=SLACK_WEBHOOK_URL)
 
 app = FastAPI(title="syn-gateway")
+
+_MAX_BODY_SIZE = int(os.environ.get("SYN_MAX_BODY_SIZE", str(1024 * 1024)))  # default 1MB
+
+
+@app.middleware("http")
+async def _enforce_body_size_limit(request: Request, call_next):
+    content_length = request.headers.get("content-length")
+    if content_length and int(content_length) > _MAX_BODY_SIZE:
+        return JSONResponse(
+            status_code=413,
+            content={"detail": f"Request body exceeds {_MAX_BODY_SIZE} byte limit"},
+        )
+    return await call_next(request)
 
 
 class ToolCallRequest(BaseModel):
