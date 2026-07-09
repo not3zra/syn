@@ -48,6 +48,20 @@ class AuditStore:
             ON decisions(agent_id)
         """)
         self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS pending_rules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tool_name TEXT NOT NULL,
+                proposed_yaml TEXT NOT NULL,
+                schemas_json TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                error_message TEXT DEFAULT NULL,
+                generation_attempts INTEGER NOT NULL DEFAULT 1,
+                reviewed_by TEXT DEFAULT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        self._conn.execute("""
             CREATE TABLE IF NOT EXISTS sessions (
                 id TEXT PRIMARY KEY,
                 agent_id TEXT NOT NULL,
@@ -221,6 +235,81 @@ class AuditStore:
         rows = self._conn.execute(
             "SELECT * FROM sessions WHERE agent_id = ? AND status = 'active' AND closed_at IS NULL ORDER BY created_at ASC",
             (agent_id,),
+        )
+        return [dict(r) for r in rows.fetchall()]
+
+    def create_pending_rule(
+        self,
+        tool_name: str,
+        proposed_yaml: str,
+        schemas_json: str,
+    ) -> int:
+        now = datetime.now(timezone.utc).isoformat()
+        cursor = self._conn.execute(
+            "INSERT INTO pending_rules (tool_name, proposed_yaml, schemas_json, status, created_at, updated_at) VALUES (?, ?, ?, 'pending', ?, ?)",
+            (tool_name, proposed_yaml, schemas_json, now, now),
+        )
+        self._conn.commit()
+        return cursor.lastrowid
+
+    def list_pending_rules(self) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT * FROM pending_rules WHERE status = 'pending' ORDER BY created_at ASC"
+        )
+        return [dict(r) for r in rows.fetchall()]
+
+    def approve_pending_rule(self, tool_name: str, reviewed_by: str = "demo-admin") -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        self._conn.execute(
+            "UPDATE pending_rules SET status = 'approved', reviewed_by = ?, updated_at = ? WHERE tool_name = ? AND status = 'pending'",
+            (reviewed_by, now, tool_name),
+        )
+        self._conn.commit()
+
+    def reject_pending_rule(self, tool_name: str, reviewed_by: str = "demo-admin") -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        self._conn.execute(
+            "UPDATE pending_rules SET status = 'rejected', reviewed_by = ?, updated_at = ? WHERE tool_name = ? AND status = 'pending'",
+            (reviewed_by, now, tool_name),
+        )
+        self._conn.commit()
+
+    def approve_all_pending(self, reviewed_by: str = "demo-admin") -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        self._conn.execute(
+            "UPDATE pending_rules SET status = 'approved', reviewed_by = ?, updated_at = ? WHERE status = 'pending'",
+            (reviewed_by, now),
+        )
+        self._conn.commit()
+
+    def retry_pending_rule(self, rule_id: int, proposed_yaml: str, schemas_json: str) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        self._conn.execute(
+            "UPDATE pending_rules SET status = 'pending', proposed_yaml = ?, schemas_json = ?, error_message = NULL, generation_attempts = generation_attempts + 1, updated_at = ? WHERE id = ?",
+            (proposed_yaml, schemas_json, now, rule_id),
+        )
+        self._conn.commit()
+
+    def mark_pending_rule_error(self, rule_id: int, error_message: str) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        self._conn.execute(
+            "UPDATE pending_rules SET status = 'error', error_message = ?, updated_at = ? WHERE id = ?",
+            (error_message, now, rule_id),
+        )
+        self._conn.commit()
+
+    def get_pending_rule_by_tool(self, tool_name: str) -> dict[str, Any] | None:
+        row = self._conn.execute(
+            "SELECT * FROM pending_rules WHERE tool_name = ? ORDER BY created_at DESC LIMIT 1",
+            (tool_name,),
+        ).fetchone()
+        if row is None:
+            return None
+        return dict(row)
+
+    def list_all_pending_rules(self) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT * FROM pending_rules ORDER BY created_at ASC"
         )
         return [dict(r) for r in rows.fetchall()]
 

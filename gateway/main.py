@@ -1,3 +1,4 @@
+import json
 import os
 import time
 from datetime import datetime, timezone, timedelta
@@ -6,7 +7,7 @@ from typing import Any
 
 import yaml
 from dotenv import load_dotenv
-from fastapi import FastAPI, Query
+from fastapi import BackgroundTasks, FastAPI, Query
 from pydantic import BaseModel
 
 load_dotenv()
@@ -135,6 +136,34 @@ class BootstrapApproveRequest(BaseModel):
     target_path: str | None = None
 
 
+def _background_bootstrap_generate(tool_name: str, parameters: dict):
+    """Background task: generate bootstrap rules for an unknown tool and store as pending."""
+    try:
+        schema = {
+            "name": tool_name,
+            "description": f"Unknown tool: {tool_name}",
+            "parameters": {k: {"type": "string"} for k in parameters},
+        }
+        schemas = [schema]
+        rules = generate_rules(LLM_CLIENT, schemas, domain_config=DOMAIN_CONFIG)
+        yaml_str = rules_to_yaml(rules)
+        errors = validate_generated_yaml(yaml_str)
+        if errors:
+            raise ValueError(f"Validation errors: {'; '.join(errors)}")
+        AUDIT_STORE.create_pending_rule(
+            tool_name=tool_name,
+            proposed_yaml=yaml_str,
+            schemas_json=json.dumps(schemas),
+        )
+    except Exception as e:
+        pid = AUDIT_STORE.create_pending_rule(
+            tool_name=tool_name,
+            proposed_yaml="",
+            schemas_json=json.dumps([{"name": tool_name, "parameters": {k: {"type": "string"} for k in parameters}}]),
+        )
+        AUDIT_STORE.mark_pending_rule_error(pid, str(e))
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -180,6 +209,127 @@ def bootstrap_approve(req: BootstrapApproveRequest):
     return {"success": True, "path": str(target)}
 
 
+@app.get("/bootstrap/pending")
+def bootstrap_pending():
+    return AUDIT_STORE.list_pending_rules()
+
+
+class ApproveToolRequest(BaseModel):
+    reviewed_by: str = "demo-admin"
+
+
+@app.post("/bootstrap/approve/{tool_name}")
+def bootstrap_approve_tool(tool_name: str, req: ApproveToolRequest):
+    rule = AUDIT_STORE.get_pending_rule_by_tool(tool_name)
+    if not rule or rule["status"] != "pending":
+        return {"success": False, "error": f"No pending rule found for tool '{tool_name}'"}
+    proposed_yaml = rule["proposed_yaml"]
+    if not proposed_yaml:
+        return {"success": False, "error": f"Pending rule for '{tool_name}' has no YAML content"}
+    try:
+        data = yaml.safe_load(proposed_yaml)
+    except yaml.YAMLError as e:
+        return {"success": False, "error": f"Invalid YAML: {e}"}
+    bootstrap_path = config_path.with_suffix(".bootstrap.yaml")
+    existing: dict = {}
+    if bootstrap_path.exists():
+        existing = yaml.safe_load(bootstrap_path.read_text()) or {}
+    merged = {**existing, "tools": {**(existing.get("tools", {})), tool_name: data.get("tools", {}).get(tool_name, {})}}
+    write_policy_config(yaml.dump(merged), bootstrap_path)
+    AUDIT_STORE.approve_pending_rule(tool_name, reviewed_by=req.reviewed_by)
+    AUDIT_STORE.append({
+        "decision": "bootstrap_approved",
+        "trigger": "manual_review",
+        "action_type": tool_name,
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "reviewed_by": req.reviewed_by,
+    })
+    return {"success": True, "tool_name": tool_name}
+
+
+@app.post("/bootstrap/reject/{tool_name}")
+def bootstrap_reject_tool(tool_name: str, req: ApproveToolRequest):
+    rule = AUDIT_STORE.get_pending_rule_by_tool(tool_name)
+    if not rule or rule["status"] != "pending":
+        return {"success": False, "error": f"No pending rule found for tool '{tool_name}'"}
+    AUDIT_STORE.reject_pending_rule(tool_name, reviewed_by=req.reviewed_by)
+    AUDIT_STORE.append({
+        "decision": "bootstrap_rejected",
+        "trigger": "manual_review",
+        "action_type": tool_name,
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "reviewed_by": req.reviewed_by,
+    })
+    return {"success": True, "tool_name": tool_name}
+
+
+@app.post("/bootstrap/approve-all")
+def bootstrap_approve_all(req: ApproveToolRequest):
+    pending = AUDIT_STORE.list_pending_rules()
+    if not pending:
+        return {"success": False, "error": "No pending rules to approve"}
+    bootstrap_path = config_path.with_suffix(".bootstrap.yaml")
+    existing: dict = {}
+    if bootstrap_path.exists():
+        existing = yaml.safe_load(bootstrap_path.read_text()) or {}
+    merged_tools = dict(existing.get("tools", {}))
+    for rule in pending:
+        try:
+            data = yaml.safe_load(rule["proposed_yaml"])
+            if data and "tools" in data:
+                merged_tools[rule["tool_name"]] = data["tools"].get(rule["tool_name"], {})
+        except yaml.YAMLError:
+            pass
+    merged = {**existing, "tools": merged_tools}
+    write_policy_config(yaml.dump(merged), bootstrap_path)
+    reviewed_by = req.reviewed_by
+    for rule in pending:
+        AUDIT_STORE.approve_pending_rule(rule["tool_name"], reviewed_by=reviewed_by)
+        AUDIT_STORE.append({
+            "decision": "bootstrap_approved",
+            "trigger": "manual_review",
+            "action_type": rule["tool_name"],
+            "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "reviewed_by": reviewed_by,
+        })
+    return {"success": True, "approved_count": len(pending)}
+
+
+class RetryRequest(BaseModel):
+    tool_name: str
+    parameters: dict = {}
+
+
+@app.post("/bootstrap/retry/{rule_id}")
+def bootstrap_retry(rule_id: int, req: RetryRequest):
+    rows = AUDIT_STORE._conn.execute(
+        "SELECT * FROM pending_rules WHERE id = ?", (rule_id,)
+    ).fetchall()
+    if not rows:
+        return {"success": False, "error": f"No rule found with id {rule_id}"}
+    row = dict(rows[0])
+    if row["status"] != "error":
+        return {"success": False, "error": f"Rule {rule_id} is not in error state"}
+    # Re-trigger generation
+    try:
+        schema = {
+            "name": row["tool_name"],
+            "description": f"Unknown tool: {row['tool_name']}",
+            "parameters": {k: {"type": "string"} for k in req.parameters},
+        }
+        schemas = [schema]
+        rules = generate_rules(LLM_CLIENT, schemas, domain_config=DOMAIN_CONFIG)
+        yaml_str = rules_to_yaml(rules)
+        errors = validate_generated_yaml(yaml_str)
+        if errors:
+            raise ValueError(f"Validation errors: {'; '.join(errors)}")
+        AUDIT_STORE.retry_pending_rule(rule_id, yaml_str, json.dumps(schemas))
+        return {"success": True, "rule_id": rule_id}
+    except Exception as e:
+        AUDIT_STORE.mark_pending_rule_error(rule_id, str(e))
+        return {"success": False, "error": str(e), "rule_id": rule_id}
+
+
 class ResolveRequest(BaseModel):
     outcome: str  # "approved" or "denied"
 
@@ -208,7 +358,7 @@ def list_timeline(outcome: str | None = Query(None)):
 
 
 @app.post("/intercept")
-def intercept(req: ToolCallRequest) -> DecisionResponse:
+def intercept(req: ToolCallRequest, background_tasks: BackgroundTasks = None) -> DecisionResponse:
     AUDIT_STORE.expire_old()
     trigger_note = None
     session_id = generate_session_id(req.agent_id, int(time.time()))
@@ -259,6 +409,8 @@ def intercept(req: ToolCallRequest) -> DecisionResponse:
         )
         if not is_simulation:
             AUDIT_STORE.append(resp.model_dump(), session_id=session_id, agent_id=req.agent_id)
+        if background_tasks and not is_simulation:
+            background_tasks.add_task(_background_bootstrap_generate, req.action_type, req.parameters)
         return resp
 
     eval_config = {**FULL_CONFIG, "tools": merged_tools}

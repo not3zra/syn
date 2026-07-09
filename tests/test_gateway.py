@@ -510,3 +510,82 @@ class TestSessionLifecycle:
         })
         sid = resp.json()["session_data"]["session_id"]
         assert ":" in sid  # time-bucket format agent:bucket
+
+
+class TestBootstrapPending:
+    def _make_client(self, tmpdir, monkeypatch):
+        import importlib
+        from pathlib import Path
+        from fastapi.testclient import TestClient
+        db_path = Path(tmpdir) / "test.db"
+        monkeypatch.setenv("SYN_AUDIT_DB_PATH", str(db_path))
+        from gateway import main as gateway_main
+        importlib.reload(gateway_main)
+        return TestClient(gateway_main.app), gateway_main.AUDIT_STORE
+
+    def test_pending_initially_empty(self, tmpdir, monkeypatch):
+        c, _ = self._make_client(tmpdir, monkeypatch)
+        resp = c.get("/bootstrap/pending")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    def test_approve_single_tool(self, tmpdir, monkeypatch):
+        c, store = self._make_client(tmpdir, monkeypatch)
+        store.create_pending_rule("custom_tool", "tools:\n  custom_tool:\n    tool_trust_tier: unknown\n    anomaly_lookback: 10\n    severity_rules: []\n    policy_rules: []\n    data_sensitivity_rules: []\n    reasoning: \"\"", "[]")
+        approve_resp = c.post("/bootstrap/approve/custom_tool", json={"reviewed_by": "test-admin"})
+        assert approve_resp.status_code == 200
+        data = approve_resp.json()
+        assert data["success"] is True
+        assert data["tool_name"] == "custom_tool"
+
+        pending_resp = c.get("/bootstrap/pending")
+        assert pending_resp.json() == []
+
+    def test_approve_nonexistent_tool(self, tmpdir, monkeypatch):
+        c, _ = self._make_client(tmpdir, monkeypatch)
+        resp = c.post("/bootstrap/approve/nonexistent", json={"reviewed_by": "test-admin"})
+        assert resp.status_code == 200
+        assert resp.json()["success"] is False
+
+    def test_reject_single_tool(self, tmpdir, monkeypatch):
+        c, store = self._make_client(tmpdir, monkeypatch)
+        store.create_pending_rule("reject_me", "yaml_content", "[]")
+        reject_resp = c.post("/bootstrap/reject/reject_me", json={"reviewed_by": "test-admin"})
+        assert reject_resp.status_code == 200
+        data = reject_resp.json()
+        assert data["success"] is True
+        assert data["tool_name"] == "reject_me"
+
+        pending_resp = c.get("/bootstrap/pending")
+        assert pending_resp.json() == []
+
+    def test_approve_all(self, tmpdir, monkeypatch):
+        c, store = self._make_client(tmpdir, monkeypatch)
+        store.create_pending_rule("tool_a", "tools:\n  tool_a:\n    tool_trust_tier: unknown\n    anomaly_lookback: 10\n    severity_rules: []\n    policy_rules: []\n    data_sensitivity_rules: []\n    reasoning: \"\"", "[]")
+        store.create_pending_rule("tool_b", "tools:\n  tool_b:\n    tool_trust_tier: unknown\n    anomaly_lookback: 10\n    severity_rules: []\n    policy_rules: []\n    data_sensitivity_rules: []\n    reasoning: \"\"", "[]")
+        approve_resp = c.post("/bootstrap/approve-all", json={"reviewed_by": "test-admin"})
+        assert approve_resp.status_code == 200
+        data = approve_resp.json()
+        assert data["success"] is True
+        assert data["approved_count"] == 2
+
+        pending_resp = c.get("/bootstrap/pending")
+        assert pending_resp.json() == []
+
+    def test_retry_nonexistent_rule(self, tmpdir, monkeypatch):
+        c, _ = self._make_client(tmpdir, monkeypatch)
+        resp = c.post("/bootstrap/retry/999", json={"tool_name": "x", "parameters": {}})
+        assert resp.status_code == 200
+        assert resp.json()["success"] is False
+
+    def test_reject_nonexistent_tool(self, tmpdir, monkeypatch):
+        c, _ = self._make_client(tmpdir, monkeypatch)
+        resp = c.post("/bootstrap/reject/nonexistent", json={"reviewed_by": "test-admin"})
+        assert resp.status_code == 200
+        assert resp.json()["success"] is False
+
+    def test_approve_all_empty(self, tmpdir, monkeypatch):
+        c, _ = self._make_client(tmpdir, monkeypatch)
+        resp = c.post("/bootstrap/approve-all", json={"reviewed_by": "test-admin"})
+        assert resp.status_code == 200
+        assert resp.json()["success"] is False
