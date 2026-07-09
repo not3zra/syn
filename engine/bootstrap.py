@@ -9,10 +9,21 @@ import yaml
 
 from engine.llm import LLMClient
 
+_domain_config_path = Path(__file__).resolve().parent / "domain_config.yaml"
+DEFAULT_DOMAIN_CONFIG: dict[str, str] = (
+    yaml.safe_load(_domain_config_path.read_text())
+    if _domain_config_path.exists()
+    else {
+        "industry": "Financial services (payments, banking)",
+        "regulatory": "EU AI Act, GDPR, FINRA/SEC",
+        "risk_priorities": "Prevent unauthorized payments, protect customer PII, prevent data exfiltration",
+    }
+)
+
 BOOTSTRAP_PROMPT_TEMPLATE = """You are a security policy generator for an AI governance system called "syn".
-Industry: Financial services (payments, banking)
-Regulatory: EU AI Act, GDPR, FINRA/SEC
-Risk priorities: Prevent unauthorized payments, protect customer PII, prevent data exfiltration
+Industry: {industry}
+Regulatory: {regulatory}
+Risk priorities: {risk_priorities}
 
 Given the following MCP tool schemas, generate security policy rules for each tool.
 Return structured JSON with the following per-tool fields:
@@ -48,16 +59,26 @@ def introspect_tools(
     raise ValueError("Either api_base or manual_path must be provided")
 
 
-def build_bootstrap_prompt(tool_schemas: list[dict[str, Any]]) -> str:
+def build_bootstrap_prompt(
+    tool_schemas: list[dict[str, Any]],
+    domain_config: dict[str, str] | None = None,
+) -> str:
     schemas_json = json.dumps(tool_schemas, indent=2)
-    return BOOTSTRAP_PROMPT_TEMPLATE.format(schemas_json=schemas_json)
+    dc = domain_config or DEFAULT_DOMAIN_CONFIG
+    return BOOTSTRAP_PROMPT_TEMPLATE.format(
+        schemas_json=schemas_json,
+        industry=dc.get("industry", ""),
+        regulatory=dc.get("regulatory", ""),
+        risk_priorities=dc.get("risk_priorities", ""),
+    )
 
 
 def generate_rules(
     client: LLMClient,
     tool_schemas: list[dict[str, Any]],
+    domain_config: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
-    prompt = build_bootstrap_prompt(tool_schemas)
+    prompt = build_bootstrap_prompt(tool_schemas, domain_config=domain_config)
     output = client.generate(prompt, output_schema={"type": "bootstrap_rules"})
     return output.get("tools", [])
 

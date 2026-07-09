@@ -63,7 +63,6 @@ class TestBuildBootstrapPrompt:
         prompt = build_bootstrap_prompt(schemas)
         assert "send_payment" in prompt
         assert "Financial services" in prompt
-        assert BOOTSTRAP_PROMPT_TEMPLATE.startswith(prompt[:50])
 
     def test_includes_all_schemas(self):
         schemas = [
@@ -78,6 +77,26 @@ class TestBuildBootstrapPrompt:
         schemas = [{"name": "test_tool"}]
         prompt = build_bootstrap_prompt(schemas)
         assert '"test_tool"' in prompt
+
+    def test_default_domain_values_in_prompt(self):
+        schemas = [{"name": "test_tool", "parameters": {}}]
+        prompt = build_bootstrap_prompt(schemas)
+        assert "Financial services (payments, banking)" in prompt
+        assert "EU AI Act, GDPR, FINRA/SEC" in prompt
+        assert "Prevent unauthorized payments" in prompt
+
+    def test_custom_domain_config_in_prompt(self):
+        schemas = [{"name": "test_tool", "parameters": {}}]
+        custom_config = {
+            "industry": "Healthcare (HIPAA)",
+            "regulatory": "HIPAA, HITECH",
+            "risk_priorities": "Protect patient records, prevent data breaches",
+        }
+        prompt = build_bootstrap_prompt(schemas, domain_config=custom_config)
+        assert "Healthcare (HIPAA)" in prompt
+        assert "HIPAA, HITECH" in prompt
+        assert "Protect patient records" in prompt
+        assert "Financial services" not in prompt
 
 
 class TestGenerateRules:

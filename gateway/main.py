@@ -60,6 +60,9 @@ llm_config_path = Path(__file__).resolve().parent.parent / "engine" / "llm_confi
 LLM_CONFIG = yaml.safe_load(llm_config_path.read_text())
 LLM_CLIENT = create_llm_client(LLM_CONFIG)
 
+domain_config_path = Path(__file__).resolve().parent.parent / "engine" / "domain_config.yaml"
+DOMAIN_CONFIG = yaml.safe_load(domain_config_path.read_text()) if domain_config_path.exists() else {}
+
 bootstrap_config_path = Path(__file__).resolve().parent.parent / "engine" / "policy_config.bootstrap.yaml"
 _bootstrap_config: dict | None = None
 _bootstrap_mtime: float = 0
@@ -151,7 +154,7 @@ def list_tools():
 def bootstrap_introspect(req: BootstrapIntrospectRequest):
     try:
         schemas = req.manual_schemas or introspect_tools(api_base=req.api_base)
-        rules = generate_rules(LLM_CLIENT, schemas)
+        rules = generate_rules(LLM_CLIENT, schemas, domain_config=DOMAIN_CONFIG)
         yaml_str = rules_to_yaml(rules)
         errors = validate_generated_yaml(yaml_str)
         return {
@@ -235,15 +238,20 @@ def intercept(req: ToolCallRequest) -> DecisionResponse:
             simulation=is_simulation,
         )
         if not is_simulation:
-            AUDIT_STORE.append(resp.model_dump(), session_id=session_id)
+            AUDIT_STORE.append(resp.model_dump(), session_id=session_id, agent_id=req.agent_id)
         return resp
 
     eval_config = {**FULL_CONFIG, "tools": merged_tools}
-    session_history = AUDIT_STORE.get_session_history(session_id)
+    windowed_history = AUDIT_STORE.get_agent_recent_history(req.agent_id, window_minutes=30)
+    unbounded_history = AUDIT_STORE.get_agent_recent_history(req.agent_id, window_minutes=None)
     result = risk_evaluate(
         action_type=req.action_type,
         parameters=req.parameters,
-        session_context={"history": session_history, "session_id": session_id},
+        session_context={
+            "history": windowed_history,
+            "unbounded_history": unbounded_history,
+            "session_id": session_id,
+        },
         config=eval_config,
     )
 
@@ -304,7 +312,7 @@ def intercept(req: ToolCallRequest) -> DecisionResponse:
 
         entry = resp.model_dump()
         entry["parameters"] = req.parameters
-        AUDIT_STORE.append(entry, session_id=session_id)
+        AUDIT_STORE.append(entry, session_id=session_id, agent_id=req.agent_id)
 
         if result.decision.value == "escalated":
             SLACK_NOTIFIER.send_escalation(resp.model_dump())
