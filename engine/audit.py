@@ -135,14 +135,20 @@ class AuditStore:
         )
         self._conn.commit()
 
-    def expire_old(self, hours: int = 4) -> int:
-        cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    def expire_old(self, hours: int = 4, retention_days: int = 90) -> int:
+        now = datetime.now(timezone.utc)
+        expired_cutoff = (now - timedelta(hours=hours)).isoformat()
         cursor = self._conn.execute(
             "UPDATE decisions SET resolved_at = 'expired' WHERE decision = 'escalated' AND (resolved_at IS NULL OR resolved_at = '') AND created_at < ?",
-            (cutoff,),
+            (expired_cutoff,),
+        )
+        retention_cutoff = (now - timedelta(days=retention_days)).isoformat()
+        cursor2 = self._conn.execute(
+            "DELETE FROM decisions WHERE created_at < ?",
+            (retention_cutoff,),
         )
         self._conn.commit()
-        return cursor.rowcount
+        return cursor.rowcount + cursor2.rowcount
 
     def get_history(self, action_type: str, limit: int = 50) -> list[dict[str, Any]]:
         rows = self._conn.execute(

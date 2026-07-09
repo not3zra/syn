@@ -195,6 +195,28 @@ class TestAuditStore:
         history = self.store.get_history("send_payment", limit=3)
         assert len(history) == 3
 
+    def test_retention_deletes_old_entries(self):
+        now = datetime.now(timezone.utc)
+        very_old = (now - timedelta(days=100)).isoformat()
+        recent = (now - timedelta(days=30)).isoformat()
+
+        self.store.append({"action_type": "a", "decision": "approved", "timestamp": very_old})
+        self.store.append({"action_type": "b", "decision": "approved", "timestamp": recent})
+
+        self.store.expire_old(retention_days=90)
+        remaining = self.store.list_all()
+        assert len(remaining) == 1
+        assert remaining[0]["action_type"] == "b"
+
+    def test_retention_keeps_recent_entries(self):
+        """Entries within retention period are preserved."""
+        now = datetime.now(timezone.utc)
+        borderline = (now - timedelta(days=89)).isoformat()
+        self.store.append({"action_type": "x", "decision": "approved", "timestamp": borderline})
+        self.store.expire_old(retention_days=90)
+        remaining = self.store.list_all()
+        assert len(remaining) == 1
+
 
 class TestSessionLifecycle:
     def setup_method(self):

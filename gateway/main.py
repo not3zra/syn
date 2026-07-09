@@ -441,7 +441,8 @@ def intercept(
     background_tasks: BackgroundTasks = None,
 ) -> DecisionResponse:
     request_id = getattr(request.state, "request_id", None)
-    AUDIT_STORE.expire_old()
+    retention_days = int(os.environ.get("SYN_AUDIT_RETENTION_DAYS", "90"))
+    AUDIT_STORE.expire_old(retention_days=retention_days)
     trigger_note = None
     session_id = generate_session_id(req.agent_id, int(time.time()))
 
