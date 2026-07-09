@@ -81,7 +81,7 @@ class TestApprovePath:
 
         for _ in range(2):
             resp = httpx.post(
-                f"{base_url}/intercept",
+                f"{base_url}/intercept", timeout=30,
                 json={
                     "action_type": "send_payment",
                     "parameters": {"amount": 50, "recipient": "alice"},
@@ -91,7 +91,7 @@ class TestApprovePath:
             assert resp.status_code == 200
 
         resp = httpx.post(
-            f"{base_url}/intercept",
+            f"{base_url}/intercept", timeout=30,
             json={
                 "action_type": "send_payment",
                 "parameters": {"amount": 50, "recipient": "alice"},
@@ -120,7 +120,7 @@ class TestEscalatePath:
     def test_escalate_path_http_response(self, server):
         base_url, _ = server
         resp = httpx.post(
-            f"{base_url}/intercept",
+            f"{base_url}/intercept", timeout=30,
             json={
                 "action_type": "delete_file",
                 "parameters": {"file_path": "/tmp/customers.xlsx"},
@@ -148,7 +148,7 @@ class TestBlockPath:
     def test_block_path_http_response(self, server):
         base_url, _ = server
         resp = httpx.post(
-            f"{base_url}/intercept",
+            f"{base_url}/intercept", timeout=30,
             json={
                 "action_type": "send_payment",
                 "parameters": {"amount": 100000, "recipient": "bob"},

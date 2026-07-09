@@ -144,7 +144,7 @@ class TestGenerateRules:
 class TestRulesToYAML:
     def test_empty_tools(self):
         yaml_str = rules_to_yaml([])
-        assert yaml_str == "tools:"
+        assert yaml_str == "tools: {}"
 
     def test_single_tool_with_minimal_fields(self):
         tools = [
