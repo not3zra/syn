@@ -5,6 +5,7 @@ import pytest
 from engine.llm import (
     LLMClient,
     MockLLMClient,
+    FallbackLLMClient,
     create_llm_client,
     build_explanation_prompt,
 )
@@ -113,12 +114,18 @@ class TestFactory:
         client = create_llm_client(config)
         assert isinstance(client, LLMClient)
 
-    def test_fallback_raises_on_missing_key(self):
+    def test_fallback_raises_on_missing_key(self, monkeypatch):
+        monkeypatch.delenv("GROQ_API_KEY", raising=False)
+        monkeypatch.delenv("FIREWORKS_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         config = {"provider": "fallback"}
         with pytest.raises(ValueError, match="GROQ_API_KEY"):
             create_llm_client(config)
 
-    def test_fireworks_raises_on_missing_key(self):
+    def test_fireworks_raises_on_missing_key(self, monkeypatch):
+        monkeypatch.delenv("GROQ_API_KEY", raising=False)
+        monkeypatch.delenv("FIREWORKS_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         config = {"provider": "fireworks"}
         with pytest.raises(ValueError, match="FIREWORKS_API_KEY"):
             create_llm_client(config)
@@ -133,3 +140,31 @@ class TestFactory:
         config = {"provider": "nonexistent"}
         with pytest.raises(ValueError, match="Unknown LLM provider"):
             create_llm_client(config)
+
+    def test_create_with_custom_timeout(self, monkeypatch):
+        monkeypatch.setenv("GROQ_API_KEY", "test-key")
+        config = {"provider": "fallback", "timeout_seconds": 30.0}
+        client = create_llm_client(config)
+        assert client.timeout_seconds == 30.0
+
+    def test_default_timeout(self, monkeypatch):
+        monkeypatch.setenv("GROQ_API_KEY", "test-key")
+        config = {"provider": "fallback"}
+        client = create_llm_client(config)
+        assert client.timeout_seconds == 15.0
+
+
+class TestFallbackOnError:
+    def test_fallback_to_mock_on_api_error(self, monkeypatch):
+        monkeypatch.setenv("GROQ_API_KEY", "test-key")
+        client = FallbackLLMClient(api_key="test-key", model="test-model")
+        prompt = build_explanation_prompt("send_payment", "blocked", "severity_floor", {"severity": 95})
+        result = client.generate(prompt)
+        assert "explanation" in result
+        assert isinstance(result["explanation"], str)
+
+    def test_timeout_configured_in_openai_client(self, monkeypatch):
+        monkeypatch.setenv("GROQ_API_KEY", "test-key")
+        client = FallbackLLMClient(api_key="test-key", timeout_seconds=42.0)
+        client._ensure_client()
+        assert client._client.timeout == 42.0

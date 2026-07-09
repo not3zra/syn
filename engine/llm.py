@@ -280,10 +280,12 @@ class FallbackLLMClient(LLMClient):
         api_key: str | None = None,
         base_url: str = "https://api.groq.com/openai/v1",
         model: str = "llama-3.3-70b-versatile",
+        timeout_seconds: float = 15.0,
     ):
         self.api_key = api_key or os.environ.get("GROQ_API_KEY") or os.environ.get("OPENAI_API_KEY")
         self.base_url = base_url
         self.model = model
+        self.timeout_seconds = timeout_seconds
         self._client = None
 
     def _ensure_client(self):
@@ -292,7 +294,11 @@ class FallbackLLMClient(LLMClient):
         if not self.api_key:
             raise ValueError("GROQ_API_KEY or OPENAI_API_KEY is required")
         from openai import OpenAI
-        self._client = OpenAI(api_key=self.api_key, base_url=self.base_url)
+        self._client = OpenAI(api_key=self.api_key, base_url=self.base_url, timeout=self.timeout_seconds)
+
+    def _fallback_to_mock(self, prompt: str) -> dict[str, Any]:
+        mock = MockLLMClient()
+        return mock.generate(prompt)
 
     def generate(
         self,
@@ -302,45 +308,51 @@ class FallbackLLMClient(LLMClient):
         self._ensure_client()
 
         if output_schema and output_schema.get("type") == "bootstrap_rules":
-            response = self._client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": BS_SYSTEM_PROMPT},
-                    {"role": "user", "content": prompt},
-                ],
-                response_format={"type": "json_object"},
-                temperature=0.3,
-                max_tokens=2500,
-            )
-            text = response.choices[0].message.content or ""
-            result = _tolerant_json_parse(text)
-            if result is not None and isinstance(result.get("tools"), list):
-                return {"tools": result["tools"]}
-            if result is not None and isinstance(result.get("tools"), dict):
-                return {"tools": list(result["tools"].values())}
-            return {"tools": []}
+            try:
+                response = self._client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": BS_SYSTEM_PROMPT},
+                        {"role": "user", "content": prompt},
+                    ],
+                    response_format={"type": "json_object"},
+                    temperature=0.3,
+                    max_tokens=2500,
+                )
+                text = response.choices[0].message.content or ""
+                result = _tolerant_json_parse(text)
+                if result is not None and isinstance(result.get("tools"), list):
+                    return {"tools": result["tools"]}
+                if result is not None and isinstance(result.get("tools"), dict):
+                    return {"tools": list(result["tools"].values())}
+                return {"tools": []}
+            except Exception:
+                return {"tools": []}
 
         # Explanation generation with retry on reasoning leaks
         for attempt in range(2):
-            sys_prompt = RETRY_SYSTEM_PROMPT if attempt == 1 else EXPLAIN_SYSTEM_PROMPT
-            response = self._client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": sys_prompt},
-                    {"role": "user", "content": prompt},
-                ],
-                response_format={"type": "json_object"},
-                temperature=0.3,
-                max_tokens=500,
-            )
-            text = response.choices[0].message.content or ""
-            result = _tolerant_json_parse(text)
-            if result is not None:
-                explanation = result.get("explanation", "")
-                remediation = result.get("remediation", "")
-                if _has_leaked_reasoning(explanation) or _has_leaked_reasoning(remediation):
-                    continue
-                return {"explanation": explanation, "remediation": remediation}
+            try:
+                sys_prompt = RETRY_SYSTEM_PROMPT if attempt == 1 else EXPLAIN_SYSTEM_PROMPT
+                response = self._client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": sys_prompt},
+                        {"role": "user", "content": prompt},
+                    ],
+                    response_format={"type": "json_object"},
+                    temperature=0.3,
+                    max_tokens=500,
+                )
+                text = response.choices[0].message.content or ""
+                result = _tolerant_json_parse(text)
+                if result is not None:
+                    explanation = result.get("explanation", "")
+                    remediation = result.get("remediation", "")
+                    if _has_leaked_reasoning(explanation) or _has_leaked_reasoning(remediation):
+                        continue
+                    return {"explanation": explanation, "remediation": remediation}
+            except Exception:
+                return self._fallback_to_mock(prompt)
         return {
             "explanation": "This action was escalated for human review based on the governance policy. Please check the trigger and factor scores for details.",
             "remediation": "Contact your administrator for assistance.",
@@ -353,10 +365,12 @@ class FireworksLLMClient(FallbackLLMClient):
         api_key: str | None = None,
         base_url: str = "https://api.fireworks.ai/inference/v1",
         model: str = "accounts/fireworks/models/llama-v3p3-70b-instruct",
+        timeout_seconds: float = 15.0,
     ):
         self.api_key = api_key or os.environ.get("FIREWORKS_API_KEY") or os.environ.get("OPENAI_API_KEY")
         self.base_url = base_url
         self.model = model
+        self.timeout_seconds = timeout_seconds
         self._client = None
 
 
@@ -377,6 +391,7 @@ def create_llm_client(config: dict[str, Any]) -> LLMClient:
             api_key=config.get("api_key"),
             base_url=config.get("base_url", "https://api.groq.com/openai/v1"),
             model=config.get("model", "llama-3.3-70b-versatile"),
+            timeout_seconds=float(config.get("timeout_seconds", 15.0)),
         )
 
     if provider == "fireworks":
@@ -390,6 +405,7 @@ def create_llm_client(config: dict[str, Any]) -> LLMClient:
             api_key=config.get("api_key"),
             base_url=config.get("base_url", "https://api.fireworks.ai/inference/v1"),
             model=config.get("model", "accounts/fireworks/models/llama-v3p3-70b-instruct"),
+            timeout_seconds=float(config.get("timeout_seconds", 15.0)),
         )
 
     raise ValueError(f"Unknown LLM provider: {provider}")
