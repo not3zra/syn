@@ -1,3 +1,5 @@
+import os
+
 from fastapi.testclient import TestClient
 from gateway.main import app, REGISTERED_TOOLS
 from engine.execution import execute_tool
@@ -70,6 +72,9 @@ def test_rate_limit_exceeded(monkeypatch):
 
 def test_rate_limit_per_ip_isolation(monkeypatch):
     _patch_rate_limit(monkeypatch, limit=1)
+    # This test exercises the trusted-proxy path where X-Forwarded-For
+    # is honored. Enable it for the test only.
+    monkeypatch.setenv("SYN_TRUSTED_PROXY", "true")
 
     payload = {"action_type": "send_payment", "parameters": {"amount": 100}}
     # Each distinct IP gets its own allowance even with a limit of 1
@@ -77,6 +82,21 @@ def test_rate_limit_per_ip_isolation(monkeypatch):
     assert client.post("/intercept", json=payload, headers={"X-Forwarded-For": "2.2.2.2"}).status_code == 200
     # Same IP exceeds the limit
     assert client.post("/intercept", json=payload, headers={"X-Forwarded-For": "1.1.1.1"}).status_code == 429
+
+
+def test_rate_limit_ignores_spoofed_xff_by_default(monkeypatch):
+    _patch_rate_limit(monkeypatch, limit=1)
+    # Without a trusted proxy, X-Forwarded-For must be ignored so an
+    # attacker cannot rotate it to evade the limit.
+    assert "SYN_TRUSTED_PROXY" not in os.environ
+
+    payload = {"action_type": "send_payment", "parameters": {"amount": 100}}
+    assert client.post("/intercept", json=payload).status_code == 200
+    # Spoofed header must NOT grant a fresh allowance
+    assert (
+        client.post("/intercept", json=payload, headers={"X-Forwarded-For": "9.9.9.9"}).status_code
+        == 429
+    )
 
 
 def test_rate_limit_configurable_via_env(monkeypatch):

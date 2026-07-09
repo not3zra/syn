@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import ipaddress
 import json
+import socket
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import yaml
 
@@ -41,6 +44,39 @@ Tool schemas:
 Return ONLY valid JSON — no explanation, no markdown."""
 
 
+def _is_safe_introspect_url(url: str) -> bool:
+    """Reject non-HTTP(S) URLs and any host that resolves to a
+    private, loopback, link-local, reserved, or multicast address.
+
+    Prevents Server-Side Request Forgery via the user-supplied
+    `api_base` (e.g. http://169.254.169.254/ or http://localhost:port).
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        return False
+    host = parsed.hostname
+    if not host:
+        return False
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except (socket.gaierror, UnicodeError):
+        return False
+    for info in infos:
+        try:
+            addr = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            return False
+        if (
+            addr.is_private
+            or addr.is_loopback
+            or addr.is_link_local
+            or addr.is_reserved
+            or addr.is_multicast
+        ):
+            return False
+    return True
+
+
 def introspect_tools(
     api_base: str | None = None,
     manual_path: str | None = None,
@@ -52,6 +88,11 @@ def introspect_tools(
             return data
         return data.get("tools", data.get("result", [data]))
     if api_base:
+        if not _is_safe_introspect_url(api_base):
+            raise ValueError(
+                "api_base must be an http(s) URL resolving to a public host "
+                "(private, loopback, and link-local addresses are rejected)"
+            )
         import httpx
         resp = httpx.get(f"{api_base}/tools", timeout=10)
         resp.raise_for_status()

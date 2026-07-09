@@ -234,3 +234,30 @@ Documented production upgrades that were explicitly considered but deferred:
 - **Decay-weighted cumulative severity.** Half-life decay would weight recent actions more than old ones within the sliding window. The simple sum was sufficient for the hackathon.
 - **Interactive Slack integration.** Block Kit approve/deny buttons require a Slack app with OAuth and a public HTTPS endpoint. Current webhook-only is functional but requires opening the browser to resolve escalations.
 - **PostgreSQL.** SQLite is appropriate for single-user demo. PostgreSQL is needed for concurrent access, multi-tenancy, and production scale.
+
+---
+
+## Security Hardening (post-submission)
+
+After the hackathon submission, a vulnerability scan + attack-surface test pass closed the following issues. All are live-verified:
+
+| # | Control | Implementation |
+|---|----------|----------------|
+| 1 | Path-traversal sanitization on `POST /bootstrap/approve` `target_path` | `_sanitize_bootstrap_path` resolves inside the engine config dir; rejects `..` escapes (400) |
+| 2 | LLM prompt-injection sanitization | `action_type`/`trigger`/`tool_name` are JSON-escaped before prompt interpolation |
+| 3 | Startup validation | Gateway fails to start if the configured LLM provider is missing its API key |
+| 4 | LLM timeout + fallback | Fireworks/Groq calls time out (default 15s) and fall back to mock instead of hanging |
+| 5 | Rate limiting | 100 req/min/IP on all paths except `GET /health`; keyed on the real TCP peer, not spoofable `X-Forwarded-For` |
+| 6 | Max body size | 1 MB enforced for both `Content-Length` and chunked transfer encoding |
+| 7 | Audit retention | Rows older than `SYN_AUDIT_RETENTION_DAYS` (90) auto-purged on each `/intercept` |
+| 8 | Request IDs | UUID `X-Request-ID` + structured logs tagged per request |
+| 9 | Async LLM calls | LLM `.generate()` runs in a thread pool; event loop is not blocked |
+| 10 | CORS | `CORSMiddleware` added; `allow_origins` configurable. `allow_credentials` is **disabled** while origins are wildcard |
+| 11 | SSRF guard | `POST /bootstrap/introspect` rejects an `api_base` that is non-HTTP(S) or resolves to a private/loopback/link-local address |
+| 12 | No dev reload in container | `gateway/Dockerfile` no longer launches uvicorn with `--reload` |
+
+### Residual risks (require pre-production work)
+
+- **No authentication/RBAC.** Out of scope for the hackathon (see Out of Scope). `/resolve/{entry_id}` executes a tool on approval and `/bootstrap/approve*` writes policy files — both are unprotected.
+- **Fresh `agent_id` evasion.** Rotating `agent_id` per action bypasses session and sliding-window tracking. Only authentication mitigates this.
+- **Proxy deployment.** The rate limiter keys on the raw peer IP. Behind a trusted reverse proxy it must be changed to trust `X-Forwarded-For` from that proxy only.

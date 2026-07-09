@@ -166,14 +166,40 @@ GROQ_API_KEY="gsk_..."
 SYN_SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."
 ```
 
+### Runtime Security / Hardening (env vars)
+
+These controls were added in the post-submission hardening pass:
+
+| Env Var | Default | Purpose |
+|----------|---------|---------|
+| `SYN_RATE_LIMIT` | `100` | Max requests per IP per window (`SYN_RATE_LIMIT_WINDOW_SECONDS`, default 60s). Rate-limited on all paths except `GET /health`. Keyed on the real TCP peer, **not** client-supplied `X-Forwarded-For`/`X-Real-IP`. |
+| `SYN_MAX_BODY_SIZE` | `1048576` (1 MB) | Max request body. Enforced for both `Content-Length` and chunked transfer encoding. |
+| `SYN_ALLOW_ORIGINS` | `*` | CORS allowed origins. Returned as-is; `Access-Control-Allow-Credentials` is **disabled** (do not enable with `*`). |
+| `SYN_AUDIT_RETENTION_DAYS` | `90` | Audit rows older than this are purged automatically on each `/intercept`. |
+| `SYN_AUDIT_DB_PATH` | `data/audit.db` | SQLite audit DB location. |
+
+Other behaviors:
+- **Startup validation:** the gateway fails to start if the configured LLM provider requires an API key that is missing.
+- **LLM timeout + fallback:** Fireworks/Groq calls time out after `timeout_seconds` (default 15s in `llm_config.yaml`) and fall back to the mock client rather than hanging or crashing. LLM calls run in a thread pool so the event loop is not blocked.
+- **Request IDs:** every request gets a UUID `X-Request-ID` and structured logs are tagged with it.
+- **Bootstrap path sanitization:** `POST /bootstrap/approve` resolves `target_path` inside the engine config directory and rejects directory traversal.
+- **Prompt sanitization:** user-influenced values (`action_type`, `trigger`, `tool_name`) are JSON-escaped before LLM prompt interpolation to block prompt injection.
+- **SSRF guard:** `POST /bootstrap/introspect` rejects an `api_base` that is non-HTTP(S) or resolves to a private/loopback/link-local/reserved/multicast address. Use `manual_schemas` for localhost or internal MCP servers.
+
+### Known residual risks (pre-production)
+
+- **No authentication/RBAC** on any endpoint, including `/resolve/{entry_id}` (executes a tool on approval) and `/bootstrap/approve*` (writes policy files). Acceptable for the hackathon; required before production.
+- **Fresh `agent_id` evasion:** rotating `agent_id` per action bypasses session/sequence tracking. Mitigated only by authentication.
+- **Behind a trusted proxy:** when deployed behind a reverse proxy, the rate limiter must be changed to trust `X-Forwarded-For` from that proxy only (currently it uses the raw peer).
+
 ### LLM Provider Config
 
 Edit `engine/llm_config.yaml`:
 
 ```yaml
-# Options: mock | groq | fireworks
-provider: groq
-model: llama-3.3-70b-versatile
+# Options: mock | groq | fireworks  (default: fireworks)
+provider: fireworks
+model: accounts/fireworks/models/glm-5p2
 ```
 
 | Provider | API Key Env Var | Free Tier |
@@ -201,7 +227,7 @@ venv\Scripts\activate    # Windows
 # source venv/bin/activate  # Linux/Mac
 
 pip install -r requirements.txt
-uvicorn gateway.main:app --host 0.0.0.0 --port 8000 --reload
+uvicorn gateway.main:app --host 0.0.0.0 --port 8000
 ```
 
 **Frontend** (separate terminal):
@@ -449,8 +475,8 @@ Run these 4 calls in sequence in **LIVE** mode with the same `agent_id`:
 ### `engine/llm_config.yaml`
 
 ```yaml
-provider: groq       # mock | groq | fireworks
-model: llama-3.3-70b-versatile
+provider: fireworks       # mock | groq | fireworks
+model: accounts/fireworks/models/glm-5p2
 ```
 
 ### `engine/policy_config.yaml` (Base Tool Profiles)
@@ -494,16 +520,18 @@ weights:
 
 ```yaml
 sequences:
-  - pair: ["check_balance", "send_payment"]
+  - actions: ["check_balance", "send_payment"]
     severity: 80
-  - pair: ["query_database", "delete_file"]
+  - actions: ["query_database", "delete_file"]
     severity: 90
-  - pair: ["query_database", "send_payment"]
+  - actions: ["query_database", "send_payment"]
     severity: 85
-  - pair: ["read_file", "send_email"]
+  - actions: ["read_file", "send_email"]
     severity: 75
-  - pair: ["query_database", "update_database"]
+  - actions: ["query_database", "update_database"]
     severity: 70
+  - actions: ["check_balance", "query_database", "send_payment"]
+    severity: 95
 ```
 
 ### `engine/regulatory_mapping.yaml`

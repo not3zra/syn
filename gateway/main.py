@@ -149,10 +149,13 @@ _rate_limiter = _RateLimiter(_RATE_LIMIT, _RATE_WINDOW)
 
 
 _ALLOW_ORIGINS = os.environ.get("SYN_ALLOW_ORIGINS", "*").split(",")
+# NOTE: credentials are disabled because origins are wildcard. Enabling
+# allow_credentials with "*" lets any website make credentialed
+# cross-origin requests. Re-enable only with a fixed allow_origins list.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_ALLOW_ORIGINS,
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -160,13 +163,40 @@ app.add_middleware(
 _MAX_BODY_SIZE = int(os.environ.get("SYN_MAX_BODY_SIZE", str(1024 * 1024)))  # default 1MB
 
 
+_METHODS_WITH_BODY = {"POST", "PUT", "PATCH", "DELETE"}
+
+
 @app.middleware("http")
 async def _enforce_body_size_limit(request: Request, call_next):
     content_length = request.headers.get("content-length")
-    if content_length and int(content_length) > _MAX_BODY_SIZE:
+    if content_length is not None:
+        try:
+            if int(content_length) > _MAX_BODY_SIZE:
+                # We have not read the body; close the connection so the
+                # server does not try to reuse a socket with unread bytes.
+                return JSONResponse(
+                    status_code=413,
+                    content={"detail": f"Request body exceeds {_MAX_BODY_SIZE} byte limit"},
+                    headers={"Connection": "close"},
+                )
+        except ValueError:
+            pass
+        return await call_next(request)
+
+    # No Content-Length header. We deliberately do NOT stream the body
+    # to enforce the cap: Starlette's request.stream() raises
+    # ClientDisconnect mid-iteration in this uvicorn/Starlette version,
+    # which corrupts the connection and can crash the worker. Instead we
+    # reject any body-carrying method that omits Content-Length (covers
+    # chunked transfer encoding and other unknown-size bodies), so an
+    # attacker cannot bypass the size limit by omitting the header.
+    if request.method in _METHODS_WITH_BODY:
         return JSONResponse(
-            status_code=413,
-            content={"detail": f"Request body exceeds {_MAX_BODY_SIZE} byte limit"},
+            status_code=411,
+            content={
+                "detail": "Length Required: send a Content-Length header "
+                f"(max {_MAX_BODY_SIZE} bytes)"
+            },
         )
     return await call_next(request)
 
@@ -199,13 +229,22 @@ async def _rate_limit(request: Request, call_next):
     return await call_next(request)
 
 
+def _trusted_proxy_enabled() -> bool:
+    return os.environ.get("SYN_TRUSTED_PROXY", "").lower() in ("true", "1", "yes")
+
+
 def _client_ip(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    real_ip = request.headers.get("x-real-ip")
-    if real_ip:
-        return real_ip.strip()
+    # By default we do NOT trust client-supplied proxy headers — an
+    # attacker can spoof X-Forwarded-For / X-Real-IP to evade the rate
+    # limit. Only honor them when a trusted reverse proxy is explicitly
+    # configured via SYN_TRUSTED_PROXY=true.
+    if _trusted_proxy_enabled():
+        forwarded = request.headers.get("x-forwarded-for")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+        real_ip = request.headers.get("x-real-ip")
+        if real_ip:
+            return real_ip.strip()
     return request.client.host if request.client else "unknown"
 
 
