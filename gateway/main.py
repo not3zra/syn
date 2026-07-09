@@ -8,6 +8,7 @@ from typing import Any
 import yaml
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -98,6 +99,15 @@ SLACK_WEBHOOK_URL = os.environ.get("SYN_SLACK_WEBHOOK_URL")
 SLACK_NOTIFIER = SlackNotifier(webhook_url=SLACK_WEBHOOK_URL)
 
 app = FastAPI(title="syn-gateway")
+
+_ALLOW_ORIGINS = os.environ.get("SYN_ALLOW_ORIGINS", "*").split(",")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_ALLOW_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 _MAX_BODY_SIZE = int(os.environ.get("SYN_MAX_BODY_SIZE", str(1024 * 1024)))  # default 1MB
 

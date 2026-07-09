@@ -40,6 +40,25 @@ def test_health_returns_ok():
     assert response.json() == {"status": "ok"}
 
 
+def test_cors_headers_on_response():
+    response = client.get("/health", headers={"origin": "http://example.com"})
+    assert response.status_code == 200
+    origin = response.headers.get("access-control-allow-origin")
+    assert origin in ("*", "http://example.com")
+
+
+def test_cors_preflight_succeeds():
+    response = client.options(
+        "/intercept",
+        headers={
+            "origin": "http://localhost:3000",
+            "access-control-request-method": "POST",
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers.get("access-control-allow-origin") in ("*", "http://localhost:3000")
+
+
 def test_body_size_limit_exceeded():
     large_payload = {"action_type": "x" * (1024 * 1024 + 1)}
     response = client.post("/intercept", json=large_payload)
