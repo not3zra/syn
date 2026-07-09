@@ -3,7 +3,7 @@ from pathlib import Path
 
 from engine.session import (
     generate_session_id,
-    find_risky_sequence,
+    find_risky_patterns,
     compute_cumulative_severity,
     score_session,
 )
@@ -34,38 +34,40 @@ def test_session_id_different_agents():
     assert s1 != s2
 
 
-def test_no_risky_sequence_empty_history():
-    assert find_risky_sequence([], "send_payment", SEQUENCES) is None
+# === find_risky_patterns tests ===
+
+def test_no_pattern_empty_history():
+    assert find_risky_patterns([], "send_payment", SEQUENCES) == []
 
 
-def test_no_risky_sequence_no_match():
+def test_no_pattern_no_match():
     history = [{"action_type": "check_balance"}]
-    assert find_risky_sequence(history, "check_balance", SEQUENCES) is None
+    assert find_risky_patterns(history, "check_balance", SEQUENCES) == []
 
 
 def test_detect_check_balance_send_payment():
     history = [
         {"action_type": "check_balance"},
     ]
-    match = find_risky_sequence(history, "send_payment", SEQUENCES)
-    assert match is not None
-    assert match["pair"] == ["check_balance", "send_payment"]
+    matches = find_risky_patterns(history, "send_payment", SEQUENCES)
+    assert len(matches) == 1
+    assert matches[0]["actions"] == ["check_balance", "send_payment"]
 
 
 def test_detect_query_database_delete_file():
     history = [
         {"action_type": "query_database"},
     ]
-    match = find_risky_sequence(history, "delete_file", SEQUENCES)
-    assert match is not None
-    assert match["pair"] == ["query_database", "delete_file"]
+    matches = find_risky_patterns(history, "delete_file", SEQUENCES)
+    assert len(matches) == 1
+    assert matches[0]["actions"] == ["query_database", "delete_file"]
 
 
 def test_no_match_wrong_order():
     history = [
         {"action_type": "send_payment"},
     ]
-    assert find_risky_sequence(history, "check_balance", SEQUENCES) is None
+    assert find_risky_patterns(history, "check_balance", SEQUENCES) == []
 
 
 def test_match_with_deeper_history():
@@ -74,10 +76,44 @@ def test_match_with_deeper_history():
         {"action_type": "check_balance"},
         {"action_type": "check_balance"},
     ]
-    match = find_risky_sequence(history, "send_payment", SEQUENCES)
-    assert match is not None
-    assert match["pair"] == ["check_balance", "send_payment"]
+    matches = find_risky_patterns(history, "send_payment", SEQUENCES)
+    assert len(matches) == 1
+    assert matches[0]["actions"] == ["check_balance", "send_payment"]
 
+
+def test_detect_three_action_chain():
+    history = [
+        {"action_type": "check_balance"},
+        {"action_type": "query_database"},
+    ]
+    matches = find_risky_patterns(history, "send_payment", SEQUENCES)
+    assert len(matches) >= 1
+    found = any(m["actions"] == ["check_balance", "query_database", "send_payment"] for m in matches)
+    assert found, "3-action chain check_balance->query_database->send_payment should match"
+
+
+def test_multiple_patterns_match():
+    history = [
+        {"action_type": "check_balance"},
+        {"action_type": "query_database"},
+    ]
+    matches = find_risky_patterns(history, "send_payment", SEQUENCES)
+    assert len(matches) >= 2, "Should match both check_balance->send_payment and the 3-action chain"
+    action_sets = [tuple(m["actions"]) for m in matches]
+    assert ("check_balance", "send_payment") in action_sets
+    assert ("check_balance", "query_database", "send_payment") in action_sets
+
+
+def test_query_database_send_payment_matches():
+    history = [
+        {"action_type": "query_database"},
+    ]
+    matches = find_risky_patterns(history, "send_payment", SEQUENCES)
+    assert len(matches) == 1
+    assert matches[0]["actions"] == ["query_database", "send_payment"]
+
+
+# === compute_cumulative_severity tests ===
 
 def test_cumulative_severity_empty():
     assert compute_cumulative_severity([]) == 0.0
@@ -125,6 +161,17 @@ def test_score_session_threshold_exceeded():
     result = score_session(history, "check_balance", SEQUENCES, threshold=70)
     assert result["pattern_matched"] is False
     assert result["cumulative_severity"] == 90.0
+
+
+def test_score_session_multiple_patterns():
+    history = [
+        {"action_type": "check_balance", "severity": 15},
+        {"action_type": "query_database", "severity": 30},
+    ]
+    result = score_session(history, "send_payment", SEQUENCES, threshold=70)
+    assert result["pattern_matched"] is True
+    assert "matched_patterns" in result
+    assert len(result["matched_patterns"]) >= 2
 
 
 def test_demo_constants():

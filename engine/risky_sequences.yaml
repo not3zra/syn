@@ -1,16 +1,19 @@
 sequences:
-  - pair: ["check_balance", "send_payment"]
+  - actions: ["check_balance", "send_payment"]
     description: "Check balance immediately before sending payment — potential fraud pattern"
     severity: 80
-  - pair: ["query_database", "delete_file"]
+  - actions: ["query_database", "delete_file"]
     description: "Query database then delete file — potential data exfiltration cleanup"
     severity: 90
-  - pair: ["query_database", "send_payment"]
+  - actions: ["query_database", "send_payment"]
     description: "Query database then send payment — potential data theft for payment"
     severity: 85
-  - pair: ["read_file", "send_email"]
+  - actions: ["read_file", "send_email"]
     description: "Read file then send email — potential data exfiltration"
     severity: 75
-  - pair: ["query_database", "update_database"]
+  - actions: ["query_database", "update_database"]
     description: "Read from database then write to it — suspicious data manipulation"
     severity: 70
+  - actions: ["check_balance", "query_database", "send_payment"]
+    description: "Check balance, query database, then send payment — sophisticated fraud chain"
+    severity: 95

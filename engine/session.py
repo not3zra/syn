@@ -6,29 +6,41 @@ def generate_session_id(agent_id: str, timestamp: int) -> str:
     return f"{agent_id}:{bucket}"
 
 
-def find_risky_sequence(
+def _is_subsequence(pattern: list[str], history_types: list[str]) -> bool:
+    it = iter(history_types)
+    return all(act in it for act in pattern)
+
+
+def find_risky_patterns(
     history: list[dict[str, Any]],
     current_action_type: str,
     sequences_config: dict[str, Any],
-) -> dict[str, Any] | None:
+) -> list[dict[str, Any]]:
     if not history:
-        return None
+        return []
 
     sequences = sequences_config.get("sequences", [])
+    history_types = [h.get("action_type", "") for h in history] + [current_action_type]
 
-    last_action_type = history[-1].get("action_type", "") if history else ""
-    recent_pair = (last_action_type, current_action_type)
-
+    matches: list[dict[str, Any]] = []
     for seq in sequences:
-        pair = seq.get("pair", [])
-        if len(pair) >= 2 and recent_pair == (pair[0], pair[1]):
-            return seq
+        actions = seq.get("actions", [])
+        if len(actions) >= 2 and _is_subsequence(actions, history_types):
+            matches.append(seq)
 
-    return None
+    return matches
 
 
 def compute_cumulative_severity(history: list[dict[str, Any]]) -> float:
     return sum(h.get("severity", 0) for h in history)
+
+
+def _format_pattern_trigger(matches: list[dict[str, Any]]) -> str:
+    parts = []
+    for m in matches:
+        actions = m.get("actions", [])
+        parts.append("_".join(actions))
+    return "+".join(parts)
 
 
 def score_session(
@@ -37,17 +49,18 @@ def score_session(
     sequences_config: dict[str, Any],
     threshold: float = 70.0,
 ) -> dict[str, Any]:
-    matched_sequence = find_risky_sequence(history, current_action_type, sequences_config)
+    matched_patterns = find_risky_patterns(history, current_action_type, sequences_config)
     cumulative_severity = compute_cumulative_severity(history)
 
     result: dict[str, Any] = {
-        "pattern_matched": matched_sequence is not None,
+        "pattern_matched": len(matched_patterns) > 0,
         "cumulative_severity": cumulative_severity,
         "threshold_exceeded": cumulative_severity > threshold,
+        "matched_patterns": matched_patterns,
     }
 
-    if matched_sequence:
-        pair = matched_sequence.get("pair", [])
-        result["matched_pair"] = f"{pair[0]}_{pair[1]}" if len(pair) >= 2 else "unknown"
+    if matched_patterns:
+        result["matched_patterns_str"] = _format_pattern_trigger(matched_patterns)
+        result["matched_pair"] = _format_pattern_trigger(matched_patterns)
 
     return result
