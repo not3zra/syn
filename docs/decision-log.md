@@ -33,3 +33,19 @@ Every decision made during planning, with the hackathon choice and what would ch
 ## What this tells you
 
 Twenty decisions separate the 5-day hackathon submission from a production product. The first set (1-3) were the original session-risk differentiator improvements. Round 2 (9-11) revises those same three decisions based on deeper threat modeling. The AI Bootstrap and Slack improvements (4-7, 12-14) improve setup automation and UX. The auto-registration refinements (15-18) harden the design that was previously scoped loosely. The database (8) matters later but not now.
+
+## Round 3 — Post-security-scan residual risks (July 2026)
+
+| # | Decision | Hackathon choice | Ideal (unconstrained) | Why it matters |
+|---|---|---|---|---|
+| 19 | Authentication / RBAC | None — every endpoint is open | Authn + per-role RBAC on all endpoints | `POST /resolve/{entry_id}` executes a tool on approval and `POST /bootstrap/approve*` writes policy YAML to disk with no guard. Anyone who can reach the port can approve escalations or push policy. Required before production. |
+| 20 | Session tracking key | `agent_id` supplied by the caller | Cryptographic, server-issued, attacker-unforgeable session token | Rotating `agent_id` per call bypasses all session/sequence/cumulative tracking (Beat-4 pattern, cumulative threshold). Only authentication mitigates this. |
+| 21 | Rate-limit client identity | Raw TCP peer (`request.client.host`); `X-Forwarded-For` honored only when `SYN_TRUSTED_PROXY=true` | Trusted-proxy-aware identity with header spoofing rejected | Behind a reverse proxy the raw peer is the proxy, so all clients collapse to one bucket. Enabling `SYN_TRUSTED_PROXY` trades the spoofing risk for correct per-client limits — only safe when the proxy strips/overwrites `X-Forwarded-For`. |
+| 22 | Unknown-size request bodies | Rejected with `411 Length Required` (chunked / no `Content-Length`) | Streamed, capped, and drained cleanly | Starlette's `request.stream()` raises `ClientDisconnect` mid-iteration in this uvicorn/Starlette version, which corrupted connections and crashed the worker. Rejecting unknown-size bodies is the robust fix, but it means a *legitimate* chunked client literally cannot call the API (all real clients send `Content-Length`). |
+| 23 | SSRF guard on `api_base` | Blocks non-HTTP(S) and any host resolving to private/loopback/link-local | Same, plus an allow-list of approved MCP hosts | `POST /bootstrap/introspect` can no longer fetch `http://169.254.169.254/` or `http://localhost`. Trade-off: a *localhost/internal* MCP server can no longer be introspected via `api_base` — use `manual_schemas` instead. |
+| 24 | Bootstrap prompt injection via `manual_schemas` | Accepted (bounded by schema validation + manual approve) | Sandboxed LLM call / signed tool schemas | Tool name/description/params from `manual_schemas` are interpolated into the bootstrap LLM prompt. Impact is bounded: output is schema-validated (`validate_generated_yaml`) and requires human approval before it becomes policy. |
+| 25 | `README.md` | Left empty (`# syn` only) | Real project README | The repo's top-level README still describes nothing — onboarding starts from `docs/`. |
+| 26 | Decision-log coverage of hardening | This Round 3 entry (added post-scan) | Existing entries for every security decision | The 12 implemented hardening controls (path sanitization, prompt sanitization, startup validation, LLM timeout+fallback, rate limiting, body size, audit retention, request IDs, async LLM, CORS, SSRF guard, no `--reload`) are recorded in `docs/prd.md` but had no decision-log entry until now. |
+
+### What this tells you
+Six hackathon choices (19-24) are accepted risks that become production blockers; two (25-26) are documentation gaps. The single highest-priority item is **#19 (authentication)** — without it, #20 is also unmitigated and the high-impact endpoints stay unprotected.
