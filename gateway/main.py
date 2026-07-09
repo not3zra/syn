@@ -1,6 +1,9 @@
 import json
+import logging
 import os
 import time
+import uuid
+from contextvars import ContextVar
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
@@ -11,6 +14,22 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+
+_request_id_var: ContextVar[str] = ContextVar("request_id", default="")
+
+
+class _RequestIdFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.request_id = _request_id_var.get() or "-"
+        return True
+
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(request_id)s] %(name)s %(levelname)s: %(message)s",
+)
+for handler in logging.root.handlers:
+    handler.addFilter(_RequestIdFilter())
 
 load_dotenv()
 
@@ -123,6 +142,19 @@ async def _enforce_body_size_limit(request: Request, call_next):
     return await call_next(request)
 
 
+@app.middleware("http")
+async def _add_request_id(request: Request, call_next):
+    request_id = str(uuid.uuid4())
+    request.state.request_id = request_id
+    token = _request_id_var.set(request_id)
+    try:
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response
+    finally:
+        _request_id_var.reset(token)
+
+
 class ToolCallRequest(BaseModel):
     action_type: str
     parameters: dict
@@ -137,6 +169,7 @@ class DecisionResponse(BaseModel):
     trigger: str
     factor_scores: dict
     session_data: dict
+    request_id: str | None = None
     regulatory_tier: str
     us_regime_flags: list
     action_type: str
@@ -402,7 +435,12 @@ def list_timeline(outcome: str | None = Query(None)):
 
 
 @app.post("/intercept")
-def intercept(req: ToolCallRequest, background_tasks: BackgroundTasks = None) -> DecisionResponse:
+def intercept(
+    req: ToolCallRequest,
+    request: Request,
+    background_tasks: BackgroundTasks = None,
+) -> DecisionResponse:
+    request_id = getattr(request.state, "request_id", None)
     AUDIT_STORE.expire_old()
     trigger_note = None
     session_id = generate_session_id(req.agent_id, int(time.time()))
@@ -450,6 +488,7 @@ def intercept(req: ToolCallRequest, background_tasks: BackgroundTasks = None) ->
             parameters_abstracted={},
             timestamp=now_iso,
             simulation=is_simulation,
+            request_id=request_id,
         )
         if not is_simulation:
             AUDIT_STORE.append(resp.model_dump(), session_id=session_id, agent_id=req.agent_id)
@@ -519,6 +558,7 @@ def intercept(req: ToolCallRequest, background_tasks: BackgroundTasks = None) ->
         explanation=llm_output.get("explanation"),
         remediation=llm_output.get("remediation"),
         simulation=is_simulation,
+        request_id=request_id,
     )
 
     if not is_simulation:

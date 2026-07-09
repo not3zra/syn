@@ -40,6 +40,25 @@ def test_health_returns_ok():
     assert response.json() == {"status": "ok"}
 
 
+def test_request_id_in_response():
+    payload = {"action_type": "send_payment", "parameters": {"amount": 100}}
+    response = client.post("/intercept", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert "request_id" in data
+    assert len(data["request_id"]) > 20
+    assert response.headers.get("x-request-id") == data["request_id"]
+
+
+def test_request_id_in_unknown_tool_response():
+    payload = {"action_type": "unknown_tool_xyz", "parameters": {}}
+    response = client.post("/intercept", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert "request_id" in data
+    assert len(data["request_id"]) > 20
+
+
 def test_cors_headers_on_response():
     response = client.get("/health", headers={"origin": "http://example.com"})
     assert response.status_code == 200
