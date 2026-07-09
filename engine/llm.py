@@ -29,7 +29,7 @@ RETRY_SYSTEM_PROMPT = """You MUST respond with ONLY a valid JSON object. No othe
 Expected structure: {"explanation": str, "remediation": str}"""
 
 
-def _tolerant_json_parse(text: str) -> dict[str, Any] | None:
+def _tolerant_json_parse(text: str) -> Any | None:
     text = text.strip()
     if not text:
         return None
@@ -44,14 +44,16 @@ def _tolerant_json_parse(text: str) -> dict[str, Any] | None:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
-    m = re.search(r'\{', text)
-    if m:
-        try:
-            decoder = json.JSONDecoder()
-            result, _ = decoder.raw_decode(text[m.start():])
-            return result
-        except json.JSONDecodeError:
-            pass
+    for opener in ("[", "{"):
+        m = re.search(re.escape(opener), text)
+        if m is not None:
+            try:
+                decoder = json.JSONDecoder()
+                result, _ = decoder.raw_decode(text[m.start():])
+                if isinstance(result, (dict, list)):
+                    return result
+            except json.JSONDecodeError:
+                continue
     return None
 
 
@@ -177,7 +179,8 @@ class MockLLMClient(LLMClient):
                 if len(parts) > 1:
                     trigger = parts[1].strip()
             if "The most significant contributing factor is " in line:
-                top_factor = line.split("The most significant contributing factor is ")[1].strip().rstrip(".")
+                raw = line.split("The most significant contributing factor is ")[1].strip()
+                top_factor = raw.split(".")[0].strip()
 
         explanation = _get_mock_explanation(action_type, decision, trigger, top_factor=top_factor)
         remediation = (
@@ -191,20 +194,14 @@ class MockLLMClient(LLMClient):
         }
 
     def _mock_bootstrap_rules(self, prompt: str) -> dict[str, Any]:
-        tool_names = [
-            "send_payment", "delete_file", "query_database", "check_balance"
-        ]
-        tools_with_schemas = []
-        for line in prompt.split("\n"):
-            if '"tool_name"' in line or "'tool_name'" in line:
-                continue
-            for name in tool_names:
-                if name in line:
-                    if name not in tools_with_schemas:
-                        tools_with_schemas.append(name)
+        schemas = _tolerant_json_parse(prompt)
+        if isinstance(schemas, list):
+            tool_names = [s.get("name", "unknown_tool") for s in schemas if isinstance(s, dict)]
+        else:
+            tool_names = []
 
         rules = []
-        for name in tools_with_schemas:
+        for name in tool_names:
             rule = {
                 "tool_name": name,
                 "severity_rules": [],
@@ -268,6 +265,9 @@ class MockLLMClient(LLMClient):
                 rule["data_sensitivity_rules"] = [
                     {"field": "account_id", "pattern": ".*", "score": 20},
                 ]
+            else:
+                rule["severity_rules"] = [{"max_amount": 1000, "score": 30}]
+                rule["tool_trust_tier"] = "unknown"
 
             rules.append(rule)
 
