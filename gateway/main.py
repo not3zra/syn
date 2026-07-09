@@ -1,8 +1,10 @@
+import asyncio
 import json
 import logging
 import os
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -118,6 +120,8 @@ SLACK_WEBHOOK_URL = os.environ.get("SYN_SLACK_WEBHOOK_URL")
 SLACK_NOTIFIER = SlackNotifier(webhook_url=SLACK_WEBHOOK_URL)
 
 app = FastAPI(title="syn-gateway")
+
+_THREAD_POOL = ThreadPoolExecutor(max_workers=4)
 
 _ALLOW_ORIGINS = os.environ.get("SYN_ALLOW_ORIGINS", "*").split(",")
 app.add_middleware(
@@ -435,7 +439,7 @@ def list_timeline(outcome: str | None = Query(None)):
 
 
 @app.post("/intercept")
-def intercept(
+async def intercept(
     req: ToolCallRequest,
     request: Request,
     background_tasks: BackgroundTasks = None,
@@ -541,7 +545,8 @@ def intercept(
         factor_scores=result.factor_scores.to_dict(),
         top_factor=top_factor,
     )
-    llm_output = LLM_CLIENT.generate(prompt)
+    loop = asyncio.get_event_loop()
+    llm_output = await loop.run_in_executor(_THREAD_POOL, LLM_CLIENT.generate, prompt)
 
     resp = DecisionResponse(
         decision=result.decision.value,
