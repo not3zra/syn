@@ -169,18 +169,18 @@ class MockLLMClient(LLMClient):
             if "Action type:" in line:
                 parts = line.split("Action type:")
                 if len(parts) > 1:
-                    action_type = parts[1].strip().split(",")[0].strip()
+                    action_type = _js_strip(parts[1].strip().split(",")[0].strip())
             if "Decision:" in line:
                 parts = line.split("Decision:")
                 if len(parts) > 1:
-                    decision = parts[1].strip().split(",")[0].strip()
+                    decision = _js_strip(parts[1].strip().split(",")[0].strip())
             if "Triggered by:" in line:
                 parts = line.split("Triggered by:")
                 if len(parts) > 1:
-                    trigger = parts[1].strip()
+                    trigger = _js_strip(parts[1].strip())
             if "The most significant contributing factor is " in line:
                 raw = line.split("The most significant contributing factor is ")[1].strip()
-                top_factor = raw.split(".")[0].strip()
+                top_factor = _js_strip(raw.split(".")[0].strip())
 
         explanation = _get_mock_explanation(action_type, decision, trigger, top_factor=top_factor)
         remediation = (
@@ -381,6 +381,18 @@ def create_llm_client(config: dict[str, Any]) -> LLMClient:
     raise ValueError(f"Unknown LLM provider: {provider}")
 
 
+def _js(val: str) -> str:
+    """JSON-encode a string value for safe prompt interpolation."""
+    return json.dumps(val, ensure_ascii=False)
+
+
+def _js_strip(val: str) -> str:
+    """Strip outer JSON quotes from a value, if present."""
+    if len(val) >= 2 and val.startswith('"') and val.endswith('"'):
+        return val[1:-1]
+    return val
+
+
 def build_explanation_prompt(
     action_type: str,
     decision: str,
@@ -391,11 +403,11 @@ def build_explanation_prompt(
     scores_str = ", ".join(f"{k}: {v}" for k, v in factor_scores.items())
     prompt = (
         f"You are explaining a security decision made by a deterministic AI governance system.\n"
-        f"Context: Action type: {action_type}, Decision: {decision}, Triggered by: {trigger}\n"
+        f"Context: Action type: {_js(action_type)}, Decision: {_js(decision)}, Triggered by: {_js(trigger)}\n"
         f"Factor scores (context only): {scores_str}\n"
-        f"Explain in 2 sentences why the decision was made, focused on the trigger: \"{trigger}\".\n"
+        f"Explain in 2 sentences why the decision was made, focused on the trigger: {_js(trigger)}.\n"
     )
     if top_factor:
-        prompt += f"The most significant contributing factor is {top_factor}. Mention this factor in your explanation.\n"
+        prompt += f"The most significant contributing factor is {_js(top_factor)}. Mention this factor in your explanation.\n"
     prompt += "Do not infer other reasons."
     return prompt
