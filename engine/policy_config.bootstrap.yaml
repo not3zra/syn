@@ -1,0 +1,22 @@
+tools:
+  custom_tool:
+    anomaly_lookback: 10
+    data_sensitivity_rules: []
+    policy_rules: []
+    reasoning: ''
+    severity_rules: []
+    tool_trust_tier: unknown
+  tool_a:
+    anomaly_lookback: 10
+    data_sensitivity_rules: []
+    policy_rules: []
+    reasoning: ''
+    severity_rules: []
+    tool_trust_tier: unknown
+  tool_b:
+    anomaly_lookback: 10
+    data_sensitivity_rules: []
+    policy_rules: []
+    reasoning: ''
+    severity_rules: []
+    tool_trust_tier: unknown

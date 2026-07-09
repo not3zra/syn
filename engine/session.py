@@ -25,7 +25,11 @@ def find_risky_patterns(
     matches: list[dict[str, Any]] = []
     for seq in sequences:
         actions = seq.get("actions", [])
-        if len(actions) >= 2 and _is_subsequence(actions, history_types):
+        if (
+            len(actions) >= 2
+            and actions[-1] == current_action_type
+            and _is_subsequence(actions, history_types)
+        ):
             matches.append(seq)
 
     return matches
@@ -39,7 +43,7 @@ def _format_pattern_trigger(matches: list[dict[str, Any]]) -> str:
     parts = []
     for m in matches:
         actions = m.get("actions", [])
-        parts.append("_".join(actions))
+        parts.append("->".join(actions))
     return "+".join(parts)
 
 

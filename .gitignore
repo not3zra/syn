@@ -7,6 +7,7 @@ frontend/dist/
 data/
 .env
 ralph/
+syn_gateway.egg-info/
 AGENTS.md
 docs/agents/
 docs/ai-action-firewall-project-spec.md

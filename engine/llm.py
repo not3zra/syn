@@ -1,7 +1,67 @@
 import json
 import os
+import re
 from abc import ABC, abstractmethod
 from typing import Any
+
+
+REASONING_PATTERNS = re.compile(
+    r'(I need to|I must|Let me|Let\'s|I should|I will|'
+    r'First,|First I|The user wants|The user asks|'
+    r'Here is|Here\'s|In this|Looking at|'
+    r'OK,|Okay,|So,|Now,|'
+    r'Explain why|I need to explain|'
+    r'Respond with|Return only|'
+    r'must return|must respond|'
+    r'Let me think|I think|'
+    r'\{""|Explanation:.*\{|remediation:.*\{)',
+    re.IGNORECASE,
+)
+
+
+def _has_leaked_reasoning(text: str) -> bool:
+    if not text:
+        return False
+    return bool(REASONING_PATTERNS.search(text))
+
+
+RETRY_SYSTEM_PROMPT = """You MUST respond with ONLY a valid JSON object. No other text. No reasoning. No thinking. No markdown. No code fences. Your previous response contained reasoning text before the JSON. This time output ONLY the JSON object, starting with '{' and ending with '}'.
+Expected structure: {"explanation": str, "remediation": str}"""
+
+
+def _tolerant_json_parse(text: str) -> dict[str, Any] | None:
+    text = text.strip()
+    if not text:
+        return None
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    text = re.sub(r'^```(?:json)?\s*', '', text, flags=re.MULTILINE)
+    text = re.sub(r'\s*```$', '', text, flags=re.MULTILINE)
+    text = text.strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    m = re.search(r'\{', text)
+    if m:
+        try:
+            decoder = json.JSONDecoder()
+            result, _ = decoder.raw_decode(text[m.start():])
+            return result
+        except json.JSONDecodeError:
+            pass
+    return None
+
+
+BS_SYSTEM_PROMPT = """You are a security policy generator for an AI governance system.
+Respond with ONLY a single JSON object. No markdown. No code fences. No preamble. No chain-of-thought. No reasoning. No restating the instructions.
+Expected structure: {"tools": [{"tool_name": str, "severity_rules": list, "policy_rules": list, "data_sensitivity_rules": list, "tool_trust_tier": str, "anomaly_lookback": int, "reasoning": str}]}"""
+
+EXPLAIN_SYSTEM_PROMPT = """You are a security governance assistant.
+Respond with ONLY a single JSON object. No markdown. No code fences. No preamble. No chain-of-thought. No reasoning. Do not restate the question or instructions.
+Expected structure: {"explanation": str, "remediation": str}"""
 
 
 class LLMClient(ABC):
@@ -18,9 +78,16 @@ def _format_pair(trigger: str) -> str:
     parts = trigger.split(":")
     if len(parts) >= 3:
         raw = parts[2]
-        segs = raw.split("_")
-        if len(segs) == 4:
-            return f"{segs[0]}_{segs[1]} followed by {segs[2]}_{segs[3]}"
+        patterns = raw.split("+")
+        readable = []
+        for p in patterns:
+            segs = p.split("->")
+            if len(segs) == 2:
+                readable.append(f"{segs[0]} followed by {segs[1]}")
+            elif len(segs) >= 3:
+                readable.append(" then ".join(segs))
+        if readable:
+            return ", and ".join(readable)
     return ""
 
 
@@ -238,59 +305,46 @@ class FallbackLLMClient(LLMClient):
             response = self._client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are a security policy generator for an AI governance system. "
-                            "Respond with valid JSON containing a 'tools' array. "
-                            "Each tool object must have: tool_name, severity_rules, policy_rules, "
-                            "data_sensitivity_rules, tool_trust_tier, anomaly_lookback, reasoning. "
-                            "Return ONLY valid JSON — no explanation, no markdown."
-                        ),
-                    },
+                    {"role": "system", "content": BS_SYSTEM_PROMPT},
                     {"role": "user", "content": prompt},
                 ],
                 response_format={"type": "json_object"},
                 temperature=0.3,
-                max_tokens=800,
+                max_tokens=2500,
             )
-            text = response.choices[0].message.content or "{}"
-            try:
-                result = json.loads(text)
-                return {
-                    "tools": result.get("tools", []),
-                }
-            except json.JSONDecodeError:
-                return {"tools": []}
+            text = response.choices[0].message.content or ""
+            result = _tolerant_json_parse(text)
+            if result is not None and isinstance(result.get("tools"), list):
+                return {"tools": result["tools"]}
+            if result is not None and isinstance(result.get("tools"), dict):
+                return {"tools": list(result["tools"].values())}
+            return {"tools": []}
 
-        response = self._client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a security governance assistant. "
-                        "Respond with valid JSON using keys 'explanation' and 'remediation'."
-                    ),
-                },
-                {"role": "user", "content": prompt},
-            ],
-            response_format={"type": "json_object"},
-            temperature=0.3,
-            max_tokens=300,
-        )
-        text = response.choices[0].message.content or "{}"
-        try:
-            result = json.loads(text)
-            return {
-                "explanation": result.get("explanation", ""),
-                "remediation": result.get("remediation", ""),
-            }
-        except json.JSONDecodeError:
-            return {
-                "explanation": text,
-                "remediation": "Contact your administrator for assistance.",
-            }
+        # Explanation generation with retry on reasoning leaks
+        for attempt in range(2):
+            sys_prompt = RETRY_SYSTEM_PROMPT if attempt == 1 else EXPLAIN_SYSTEM_PROMPT
+            response = self._client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": sys_prompt},
+                    {"role": "user", "content": prompt},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.3,
+                max_tokens=500,
+            )
+            text = response.choices[0].message.content or ""
+            result = _tolerant_json_parse(text)
+            if result is not None:
+                explanation = result.get("explanation", "")
+                remediation = result.get("remediation", "")
+                if _has_leaked_reasoning(explanation) or _has_leaked_reasoning(remediation):
+                    continue
+                return {"explanation": explanation, "remediation": remediation}
+        return {
+            "explanation": "This action was escalated for human review based on the governance policy. Please check the trigger and factor scores for details.",
+            "remediation": "Contact your administrator for assistance.",
+        }
 
 
 class FireworksLLMClient(FallbackLLMClient):

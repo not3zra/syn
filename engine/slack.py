@@ -1,3 +1,4 @@
+import time
 from typing import Any
 
 import httpx
@@ -6,9 +7,27 @@ import httpx
 class SlackNotifier:
     def __init__(self, webhook_url: str | None = None):
         self._webhook_url = webhook_url
+        self._recent: dict[str, float] = {}
+
+    def _is_duplicate(self, key: str) -> bool:
+        now = time.time()
+        last = self._recent.get(key)
+        if last and (now - last) < 5.0:
+            return True
+        self._recent[key] = now
+        if len(self._recent) > 100:
+            cutoff = now - 60.0
+            self._recent = {k: v for k, v in self._recent.items() if v > cutoff}
+        return False
 
     def send_escalation(self, entry: dict[str, Any]) -> bool:
         if not self._webhook_url:
+            return False
+
+        action_type = entry.get("action_type", "unknown")
+        trigger = entry.get("trigger", "unknown")
+        dedup_key = f"{action_type}:{trigger}"
+        if self._is_duplicate(dedup_key):
             return False
 
         action_type = entry.get("action_type", "unknown")

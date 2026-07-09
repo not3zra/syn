@@ -35,6 +35,7 @@ def evaluate(
 
     ctx = session_context or {}
     history = ctx.get("history", [])
+    unbounded_history = ctx.get("unbounded_history", history)
     session_threshold = ctx.get("session_threshold", 70)
 
     sequences_config = config.get("sequences_config", DEFAULT_SEQUENCES)
@@ -43,7 +44,7 @@ def evaluate(
     policy = score_policy(action_type, parameters, config)
     anomaly = score_anomaly(action_type, parameters, config, history)
     data_sensitivity = score_data_sensitivity(action_type, parameters, config)
-    confidence = score_confidence(action_type, parameters, config, history)
+    confidence = score_confidence(action_type, parameters, config, unbounded_history)
     tool_trust = score_tool_trust(action_type, parameters, config)
 
     factor_scores = FactorScores(

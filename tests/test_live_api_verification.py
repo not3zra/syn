@@ -239,7 +239,7 @@ class TestRiskEngineScenarios:
         assert resp.status_code == 200
         data = resp.json()
         assert data["decision"] == "escalated"
-        assert data["trigger"] == "session:pattern_matched:check_balance_send_payment"
+        assert data["trigger"] == "session:pattern_matched:check_balance->send_payment"
         assert data["session_data"]["pattern_matched"] is True
         non_generic_phrases = [
             "risky sequence pattern",
@@ -369,8 +369,8 @@ class TestBeat4Sequence:
         assert data["decision"] == "escalated", (
             f"Beat 4 final step: expected escalated, got {data['decision']}"
         )
-        assert data["trigger"] == "session:pattern_matched:check_balance_send_payment", (
-            f"Beat 4 trigger: expected session:pattern_matched:check_balance_send_payment, got {data['trigger']}"
+        assert data["trigger"] == "session:pattern_matched:check_balance->send_payment", (
+            f"Beat 4 trigger: expected session:pattern_matched:check_balance->send_payment, got {data['trigger']}"
         )
         assert data["session_data"]["pattern_matched"] is True
         expected_cumulative = 3 * 15

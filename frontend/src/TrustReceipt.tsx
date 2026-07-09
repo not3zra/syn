@@ -47,7 +47,9 @@ function parseTrigger(trigger: string): string {
   if (parts.length >= 3) {
     const [, area, ...details] = parts;
     const areaStr = area.replace(/_/g, ' ');
-    const detailStr = details.join(': ').replace(/_/g, ' → ');
+    const detailStr = details.join(': ')
+      .replace(/->/g, ' → ')
+      .replace(/\+/g, ', ');
     return `${areaStr}: ${detailStr}`;
   }
   if (parts.length >= 2) {

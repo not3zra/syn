@@ -257,3 +257,113 @@ class TestSessionLifecycle:
         assert len(active_2) == 1
         assert active_1[0]["id"] == sid1
         assert active_2[0]["id"] == sid2
+
+
+class TestPendingRules:
+    def setup_method(self):
+        self.tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self.store = AuditStore(self.tmp.name)
+
+    def teardown_method(self):
+        self.store.close()
+        Path(self.tmp.name).unlink()
+
+    def test_create_pending_rule(self):
+        pid = self.store.create_pending_rule(
+            tool_name="unknown_tool",
+            proposed_yaml="tools:\n  unknown_tool:\n    tool_trust_tier: unknown",
+            schemas_json='[{"name": "unknown_tool", "parameters": {}}]',
+        )
+        assert isinstance(pid, int)
+        assert pid > 0
+
+    def test_list_pending_rules_empty_initially(self):
+        rules = self.store.list_pending_rules()
+        assert rules == []
+
+    def test_list_pending_rules_returns_created(self):
+        self.store.create_pending_rule("tool_a", "yaml_a", "[]")
+        self.store.create_pending_rule("tool_b", "yaml_b", "[]")
+        rules = self.store.list_pending_rules()
+        assert len(rules) == 2
+        assert rules[0]["tool_name"] == "tool_a"
+        assert rules[0]["status"] == "pending"
+        assert rules[1]["tool_name"] == "tool_b"
+
+    def test_approve_pending_rule(self):
+        pid = self.store.create_pending_rule("tool_a", "yaml_a", "[]")
+        self.store.approve_pending_rule("tool_a", reviewed_by="demo-admin")
+        rules = self.store.list_pending_rules()
+        assert len(rules) == 0
+
+        row = self.store._conn.execute(
+            "SELECT * FROM pending_rules WHERE id = ?", (pid,)
+        ).fetchone()
+        assert row["status"] == "approved"
+        assert row["reviewed_by"] == "demo-admin"
+
+    def test_reject_pending_rule(self):
+        self.store.create_pending_rule("tool_a", "yaml_a", "[]")
+        self.store.reject_pending_rule("tool_a", reviewed_by="demo-admin")
+        rules = self.store.list_pending_rules()
+        assert len(rules) == 0
+
+        row = self.store._conn.execute(
+            "SELECT * FROM pending_rules WHERE id = ?", (1,)
+        ).fetchone()
+        assert row["status"] == "rejected"
+        assert row["reviewed_by"] == "demo-admin"
+
+    def test_approve_only_matching_tool(self):
+        self.store.create_pending_rule("tool_a", "yaml_a", "[]")
+        self.store.create_pending_rule("tool_b", "yaml_b", "[]")
+        self.store.approve_pending_rule("tool_a", reviewed_by="demo-admin")
+        rules = self.store.list_pending_rules()
+        assert len(rules) == 1
+        assert rules[0]["tool_name"] == "tool_b"
+
+    def test_approve_all(self):
+        self.store.create_pending_rule("tool_a", "yaml_a", "[]")
+        self.store.create_pending_rule("tool_b", "yaml_b", "[]")
+        self.store.approve_all_pending(reviewed_by="demo-admin")
+        rules = self.store.list_pending_rules()
+        assert len(rules) == 0
+        rows = self.store._conn.execute(
+            "SELECT * FROM pending_rules"
+        ).fetchall()
+        assert all(r["status"] == "approved" for r in rows)
+        assert all(r["reviewed_by"] == "demo-admin" for r in rows)
+
+    def test_retry_pending_rule_increments_attempts(self):
+        pid = self.store.create_pending_rule("tool_a", "yaml_a", "[]")
+        self.store.mark_pending_rule_error(pid, "LLM failed")
+        self.store.retry_pending_rule(pid, "new_yaml", "[]")
+        row = self.store._conn.execute(
+            "SELECT * FROM pending_rules WHERE id = ?", (pid,)
+        ).fetchone()
+        assert row["status"] == "pending"
+        assert row["error_message"] is None
+        assert row["generation_attempts"] == 2
+        assert row["proposed_yaml"] == "new_yaml"
+
+    def test_mark_pending_rule_error(self):
+        pid = self.store.create_pending_rule("tool_a", "yaml_a", "[]")
+        self.store.mark_pending_rule_error(pid, "LLM generation failed")
+        row = self.store._conn.execute(
+            "SELECT * FROM pending_rules WHERE id = ?", (pid,)
+        ).fetchone()
+        assert row["status"] == "error"
+        assert row["error_message"] == "LLM generation failed"
+        assert row["generation_attempts"] == 1
+
+    def test_get_pending_rule_by_tool_name(self):
+        self.store.create_pending_rule("tool_a", "yaml_a", "[]")
+        self.store.create_pending_rule("tool_b", "yaml_b", "[]")
+        row = self.store.get_pending_rule_by_tool("tool_a")
+        assert row is not None
+        assert row["tool_name"] == "tool_a"
+        assert row["status"] == "pending"
+
+    def test_get_pending_rule_by_tool_not_found(self):
+        row = self.store.get_pending_rule_by_tool("nonexistent")
+        assert row is None
