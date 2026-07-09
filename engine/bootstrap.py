@@ -118,6 +118,8 @@ def _render_yaml_val(val: Any, indent: int, key: str | None = None) -> str:
 
 
 def rules_to_yaml(tools: list[dict[str, Any]]) -> str:
+    if not tools:
+        return "tools: {}"
     lines = ["tools:"]
     for tool in tools:
         name = tool.get("tool_name", "unknown")

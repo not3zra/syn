@@ -41,6 +41,8 @@ def score_severity(action_type: str, parameters: dict, config: dict) -> float:
 
     if action_type == "send_payment":
         amount = parameters.get("amount", 0)
+        if amount is None:
+            amount = 0
         for rule in rules:
             max_amt = rule.get("max_amount")
             if max_amt is None:

@@ -1,22 +1,80 @@
 tools:
-  custom_tool:
-    anomaly_lookback: 10
-    data_sensitivity_rules: []
-    policy_rules: []
-    reasoning: ''
-    severity_rules: []
+  <script>alert(1)</script>:
+    anomaly_lookback: 1
+    data_sensitivity_rules:
+    - field: tool_name
+      pattern: <script>.*</script>
+      score: 100
+    - field: any_parameter
+      pattern: .*
+      score: 100
+    policy_rules:
+    - condition:
+        field: tool_name
+        operator: contains_script_tag
+        value: true
+      description: Tool name contains potential XSS injection payload and must be
+        blocked from execution
+      score: 100
+    - condition:
+        field: parameters_schema
+        operator: is_empty
+        value: true
+      description: Tool has no defined parameters schema and cannot be validated for
+        safe inputs
+      score: 90
+    - condition:
+        field: description
+        operator: matches
+        value: Unknown tool
+      description: Tool description is non-informative and indicates unregistered
+        or adversarial tool injection
+      score: 95
+    severity_rules:
+    - path_pattern: .*
+      score: 100
     tool_trust_tier: unknown
-  tool_a:
-    anomaly_lookback: 10
-    data_sensitivity_rules: []
-    policy_rules: []
-    reasoning: ''
-    severity_rules: []
-    tool_trust_tier: unknown
-  tool_b:
-    anomaly_lookback: 10
-    data_sensitivity_rules: []
-    policy_rules: []
-    reasoning: ''
-    severity_rules: []
+  Send_Payment:
+    anomaly_lookback: 20
+    data_sensitivity_rules:
+    - field: recipient
+      pattern: pii_account_identifier
+      score: 75
+    - field: amount
+      pattern: financial_transaction_value
+      score: 60
+    policy_rules:
+    - condition:
+        field: recipient
+        operator: not_in_verified_list
+        value: trusted_beneficiaries
+      description: Block payments to unverified or unknown recipients
+      score: 80
+    - condition:
+        field: amount
+        operator: '>'
+        value: 10000
+      description: Flag high-value payments above regulatory reporting threshold
+      score: 70
+    - condition:
+        field: amount
+        operator: '>'
+        value: 250000
+      description: Block payments exceeding single-transaction limit
+      score: 100
+    - condition:
+        field: recipient
+        operator: matches
+        value: high_risk_jurisdiction_pattern
+      description: Flag payments to high-risk jurisdictions
+      score: 85
+    severity_rules:
+    - max_amount: 10000
+      score: 40
+    - max_amount: 50000
+      score: 70
+    - max_amount: 250000
+      score: 90
+    - query_type: unauthorized_recipient
+      score: 85
     tool_trust_tier: unknown

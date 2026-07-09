@@ -184,7 +184,7 @@ def list_tools():
 @ app.post("/bootstrap/introspect")
 def bootstrap_introspect(req: BootstrapIntrospectRequest):
     try:
-        schemas = req.manual_schemas or introspect_tools(api_base=req.api_base)
+        schemas = req.manual_schemas if req.manual_schemas is not None else introspect_tools(api_base=req.api_base)
         rules = generate_rules(LLM_CLIENT, schemas, domain_config=DOMAIN_CONFIG)
         yaml_str = rules_to_yaml(rules)
         errors = validate_generated_yaml(yaml_str)
@@ -375,7 +375,7 @@ def intercept(req: ToolCallRequest, background_tasks: BackgroundTasks = None) ->
         if req.session_id:
             AUDIT_STORE.close_session(req.session_id)
 
-    is_simulation = req.mode == "simulation"
+    is_simulation = (req.mode or "").lower() == "simulation"
     now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
     merged_tools = _get_merged_tools()

@@ -8,9 +8,11 @@ def score_anomaly(
         return 5.0
 
     amounts = [
-        h.get("parameters", {}).get("amount", 0)
+        v
         for h in history
         if h.get("action_type") == action_type
+        for v in [h.get("parameters", {}).get("amount")]
+        if v is not None
     ]
     if len(amounts) < 2:
         return 5.0
