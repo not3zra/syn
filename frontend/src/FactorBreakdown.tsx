@@ -5,17 +5,10 @@ const FACTOR_LABELS: Record<keyof FactorScores, string> = {
   severity: 'Severity',
   policy: 'Policy',
   anomaly: 'Anomaly',
-  data_sensitivity: 'Data Sensitivity',
+  data_sensitivity: 'Data sensitivity',
   confidence: 'Confidence',
-  tool_trust: 'Tool Trust',
+  tool_trust: 'Tool trust',
 };
-
-function getColor(score: number, isInverted: boolean): string {
-  const effective = isInverted ? 100 - score : score;
-  if (effective >= 70) return 'var(--red)';
-  if (effective >= 40) return 'var(--yellow)';
-  return 'var(--green)';
-}
 
 const INVERTED = new Set(['confidence', 'tool_trust']);
 
@@ -26,22 +19,28 @@ interface FactorBreakdownProps {
 export function FactorBreakdown({ scores }: FactorBreakdownProps) {
   const entries = Object.entries(FACTOR_LABELS) as [keyof FactorScores, string][];
 
+  function band(score: number, isInverted: boolean): 'is-low' | 'is-mid' | 'is-high' {
+    const effective = isInverted ? 100 - score : score;
+    if (effective >= 70) return 'is-high';
+    if (effective >= 40) return 'is-mid';
+    return 'is-low';
+  }
+
   return (
     <div className="factor-breakdown">
-      <h3 className="section-title">Factor Scores</h3>
+      <h3 className="section-title">Factor scores</h3>
       <div className="factor-table">
         {entries.map(([key, label]) => {
           const score = scores[key];
-          const color = getColor(score, INVERTED.has(key));
+          const inverted = INVERTED.has(key);
+          const cls = band(score, inverted);
           return (
             <div key={key} className="factor-row">
               <div className="factor-info">
                 <span className="factor-name">{label}</span>
-                <span className="factor-score" style={{ color }}>
-                  {score}
-                </span>
+                <span className={`factor-score ${cls}`}>{score}</span>
               </div>
-              <CompactGauge score={INVERTED.has(key) ? 100 - score : score} color={color} />
+              <CompactGauge score={score} inverted={inverted} />
             </div>
           );
         })}
