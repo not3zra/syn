@@ -10,6 +10,8 @@ data/
 ralph/
 syn_gateway.egg-info/
 AGENTS.md
+DESIGN.md
+PRODUCT.md
 docs/agents/
 docs/ai-action-firewall-project-spec.md
 docs/amd-hackathon-plan-final-revised.md
