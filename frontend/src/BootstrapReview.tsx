@@ -562,7 +562,8 @@ export function BootstrapReview() {
 
           {!pendingLoading && pendingRules.length === 0 && !error && (
             <div className="skeleton">
-              No rules pending review. Rules appear here when an unknown tool is intercepted and bootstrap generation completes.
+              No rules pending review. Rules appear here when an unknown tool is intercepted and bootstrap generation completes.<br />
+              <span style={{ opacity: 0.6 }}>Note: simulation mode does not trigger bootstrap generation — switch to Live.</span>
             </div>
           )}
 
