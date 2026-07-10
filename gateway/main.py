@@ -380,6 +380,8 @@ def _background_bootstrap_generate(tool_name: str, parameters: dict):
         }
         schemas = [schema]
         rules = generate_rules(LLM_CLIENT, schemas, domain_config=DOMAIN_CONFIG)
+        if not rules:
+            raise ValueError("LLM returned no rules. The generation may have timed out or the model produced an unexpected response.")
         yaml_str = rules_to_yaml(rules)
         errors = validate_generated_yaml(yaml_str)
         if errors:
@@ -418,8 +420,18 @@ def list_tools():
 @ app.post("/bootstrap/introspect", dependencies=[Depends(require_demo_token)])
 def bootstrap_introspect(req: BootstrapIntrospectRequest):
     try:
-        schemas = req.manual_schemas if req.manual_schemas is not None else introspect_tools(api_base=req.api_base)
+        if req.manual_schemas is not None:
+            schemas = req.manual_schemas
+        elif req.api_base:
+            schemas = introspect_tools(api_base=req.api_base)
+        else:
+            schemas = [
+                {"name": name, "description": info["description"], "parameters": info["parameters"]}
+                for name, info in REGISTERED_TOOLS.items()
+            ]
         rules = generate_rules(LLM_CLIENT, schemas, domain_config=DOMAIN_CONFIG)
+        if not rules:
+            return {"error": "The LLM returned no rules. The generation may have timed out or the model produced an unexpected response. Please try again."}
         yaml_str = rules_to_yaml(rules)
         errors = validate_generated_yaml(yaml_str)
         return {
@@ -446,6 +458,13 @@ def bootstrap_approve(req: BootstrapApproveRequest):
 @app.get("/bootstrap/pending")
 def bootstrap_pending():
     return AUDIT_STORE.list_pending_rules()
+
+
+@app.get("/bootstrap/config")
+def bootstrap_config():
+    if bootstrap_config_path.exists():
+        return {"yaml": bootstrap_config_path.read_text()}
+    return {"yaml": "tools: {}\n"}
 
 
 class ApproveToolRequest(BaseModel):

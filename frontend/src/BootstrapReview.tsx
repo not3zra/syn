@@ -35,15 +35,82 @@ interface PendingRule {
   created_at: string;
 }
 
-function DiffView({ yaml }: { yaml: string }) {
-  const lines = yaml.split('\n');
+type DiffRow = { type: 'add' | 'del' | 'ctx'; text: string };
+
+function extractToolBody(yamlStr: string, toolName: string): string {
+  const lines = yamlStr.split('\n');
+  let capturing = false;
+  const body: string[] = [];
+  for (const line of lines) {
+    const toolMatch = line.match(/^  ([A-Za-z0-9_.-]+):\s*$/);
+    if (toolMatch) {
+      if (toolMatch[1] === toolName) {
+        capturing = true;
+      } else if (capturing) {
+        break;
+      }
+      continue;
+    }
+    if (capturing) body.push(line);
+  }
+  return body.join('\n');
+}
+
+function lineDiff(oldText: string, newText: string): DiffRow[] {
+  const a = oldText.split('\n');
+  const b = newText.split('\n');
+  const n = a.length;
+  const m = b.length;
+  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  const rows: DiffRow[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < n && j < m) {
+    if (a[i] === b[j]) {
+      rows.push({ type: 'ctx', text: a[i] });
+      i++;
+      j++;
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      rows.push({ type: 'del', text: a[i] });
+      i++;
+    } else {
+      rows.push({ type: 'add', text: b[j] });
+      j++;
+    }
+  }
+  while (i < n) rows.push({ type: 'del', text: a[i++] });
+  while (j < m) rows.push({ type: 'add', text: b[j++] });
+  return rows;
+}
+
+function DiffView({ yaml, toolName, currentYaml }: { yaml: string; toolName?: string; currentYaml: string | null }) {
+  const isFullDiff = !toolName;
+  const newBody = isFullDiff ? yaml : extractToolBody(yaml, toolName);
+  const oldBody = currentYaml ? (isFullDiff ? currentYaml : extractToolBody(currentYaml, toolName)) : '';
+  const isNew = !oldBody.trim();
+  const rows: DiffRow[] = isNew
+    ? yaml.split('\n').map((text) => ({ type: 'add' as const, text }))
+    : lineDiff(oldBody, newBody);
+
   return (
     <div className="yaml-box">
-      {lines.map((line, i) => (
-        <div className="yaml-line" key={i}>
+      <div className="diff-legend">
+        {isNew
+          ? (isFullDiff ? 'All tools are new — entire block will be written' : `New tool — entire block will be added for "${toolName}"`)
+          : (isFullDiff ? 'Changes vs current config' : `Changes vs current config for "${toolName}"`)}
+      </div>
+      {rows.map((row, i) => (
+        <div className={`yaml-line is-${row.type}`} key={i}>
           <span className="ln">{i + 1}</span>
-          <span className="sign">+</span>
-          <span className="txt">{line}</span>
+          <span className={`sign ${row.type}`}>
+            {row.type === 'add' ? '+' : row.type === 'del' ? '-' : ' '}
+          </span>
+          <span className="txt">{row.text}</span>
         </div>
       ))}
     </div>
@@ -59,8 +126,16 @@ export function BootstrapReview() {
   const [approved, setApproved] = useState(false);
   const [pendingRules, setPendingRules] = useState<PendingRule[]>([]);
   const [pendingLoading, setPendingLoading] = useState(false);
+  const [currentConfigYaml, setCurrentConfigYaml] = useState<string | null>(null);
   const [flashMessage, setFlashMessage] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<Record<string, boolean>>({});
+
+  const fetchCurrentConfig = useCallback(async () => {
+    try {
+      const cfg = await apiFetch('/bootstrap/config');
+      if (cfg.ok) setCurrentConfigYaml((await cfg.json()).yaml);
+    } catch { /* best-effort */ }
+  }, []);
 
   const fetchPending = useCallback(async (showFlash = false) => {
     setPendingLoading(true);
@@ -69,6 +144,7 @@ export function BootstrapReview() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: PendingRule[] = await res.json();
       setPendingRules(data);
+      await fetchCurrentConfig();
       if (showFlash && data.length > 0) {
         setFlashMessage(`${data.length} new rule${data.length > 1 ? 's' : ''} pending review`);
         setTimeout(() => setFlashMessage(null), 5000);
@@ -78,7 +154,7 @@ export function BootstrapReview() {
     } finally {
       setPendingLoading(false);
     }
-  }, []);
+  }, [fetchCurrentConfig]);
 
   useEffect(() => {
     if (tab === 'pending') fetchPending(true);
@@ -100,12 +176,13 @@ export function BootstrapReview() {
       if (data.error) throw new Error(data.error);
       setResult(data);
       setEditableYaml(data.yaml);
+      fetchCurrentConfig();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Introspection failed');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [fetchCurrentConfig]);
 
   const handleManual = useCallback(async () => {
     const raw = window.prompt('Paste tool schemas as a JSON array:');
@@ -126,12 +203,13 @@ export function BootstrapReview() {
       if (data.error) throw new Error(data.error);
       setResult(data);
       setEditableYaml(data.yaml);
+      fetchCurrentConfig();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Manual introspection failed');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [fetchCurrentConfig]);
 
   const handleApprove = useCallback(async () => {
     setLoading(true);
@@ -313,6 +391,11 @@ export function BootstrapReview() {
               </div>
 
               <div className="receipt-section">
+                <h3 className="section-title">Diff vs current config</h3>
+                <DiffView yaml={editableYaml} currentYaml={currentConfigYaml} />
+              </div>
+
+              <div className="receipt-section">
                 <h3 className="section-title">Policy YAML (editable)</h3>
                 <textarea
                   className="textarea"
@@ -391,7 +474,9 @@ export function BootstrapReview() {
                 <div className="tool-error">{rule.error_message}</div>
               )}
 
-              {rule.proposed_yaml && <DiffView yaml={rule.proposed_yaml} />}
+              {rule.proposed_yaml && (
+                <DiffView yaml={rule.proposed_yaml} toolName={rule.tool_name} currentYaml={currentConfigYaml} />
+              )}
 
               <div className="tool-actions">
                 {rule.status === 'error' ? (

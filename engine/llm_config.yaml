@@ -4,5 +4,6 @@ provider: fireworks
 model: accounts/fireworks/models/glm-5p2
 # Groq model (used when provider=fallback or groq):
 # model: llama-3.3-70b-versatile
-# Timeout in seconds for LLM API calls (default: 15.0):
-timeout_seconds: 15.0
+# Timeout in seconds for LLM API calls (default: 15.0).
+# Bootstrap generation is token-heavy (~2500 tokens) and needs more time.
+timeout_seconds: 120.0

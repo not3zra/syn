@@ -730,6 +730,11 @@
 .yaml-line { display: flex; padding: 0 6px; gap: 8px; }
 .yaml-line .ln { color: var(--ink-muted); width: 22px; flex-shrink: 0; user-select: none; text-align: right; }
 .yaml-line .sign { color: var(--approved); width: 12px; flex-shrink: 0; }
+.yaml-line.is-add .sign.add { color: #3cd278; }
+.yaml-line.is-del .sign.del { color: #f06a6a; }
+.yaml-line.is-del { background: rgba(240,106,106,0.08); }
+.yaml-line.is-add { background: rgba(60,210,120,0.06); }
+.diff-legend { font-size: 12px; color: var(--ink-muted); padding: 4px 8px; border-bottom: 1px solid var(--border-subtle); }
 .yaml-line .txt { color: var(--ink); white-space: pre; }
 .tool-actions { padding: 8px 12px; display: flex; gap: 6px; justify-content: flex-end; }
 

@@ -14,7 +14,11 @@ def _match_path_pattern_rule(rule: dict, param_value: str) -> float | None:
 
 
 def _generic_severity(rules: list[dict], parameters: dict) -> tuple[float, str]:
-    amount = parameters.get("amount")
+    amount_raw = parameters.get("amount")
+    try:
+        amount = float(amount_raw) if amount_raw is not None else None
+    except (TypeError, ValueError):
+        amount = None
     for rule in rules:
         if "max_amount" in rule and amount is not None:
             score = _match_max_amount_rule(rule, float(amount))

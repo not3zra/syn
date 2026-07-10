@@ -335,7 +335,7 @@ class FallbackLLMClient(LLMClient):
                     ],
                     response_format={"type": "json_object"},
                     temperature=0.3,
-                    max_tokens=2500,
+                    max_tokens=3000,
                 )
                 text = response.choices[0].message.content or ""
                 result = _tolerant_json_parse(text)
@@ -382,7 +382,7 @@ class FireworksLLMClient(FallbackLLMClient):
         self,
         api_key: str | None = None,
         base_url: str = "https://api.fireworks.ai/inference/v1",
-        model: str = "accounts/fireworks/models/llama-v3p3-70b-instruct",
+        model: str = "accounts/fireworks/models/glm-5p2",
         timeout_seconds: float = 15.0,
     ):
         self.api_key = api_key or os.environ.get("FIREWORKS_API_KEY") or os.environ.get("OPENAI_API_KEY")
@@ -390,6 +390,21 @@ class FireworksLLMClient(FallbackLLMClient):
         self.model = model
         self.timeout_seconds = timeout_seconds
         self._client = None
+
+    def _ensure_client(self):
+        if self._client is not None:
+            return
+        if not self.api_key:
+            raise ValueError(
+                "FIREWORKS_API_KEY or OPENAI_API_KEY is required for the Fireworks LLM provider."
+            )
+        from openai import OpenAI
+        self._client = OpenAI(
+            api_key=self.api_key,
+            base_url=self.base_url,
+            timeout=self.timeout_seconds,
+            max_retries=0,
+        )
 
 
 def create_llm_client(config: dict[str, Any]) -> LLMClient:
