@@ -119,6 +119,7 @@ class AuditStore:
             entry = json.loads(row["entry"])
             entry["id"] = row["id"]
             entry["created_at"] = row["created_at"]
+            entry["agent_id"] = row["agent_id"]
             results.append(entry)
         return results
 

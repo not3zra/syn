@@ -42,6 +42,35 @@ def test_health_returns_ok():
     assert response.json() == {"status": "ok"}
 
 
+def test_agent_id_partitions_timeline(tmp_path, monkeypatch):
+    import uuid
+
+    import gateway.main as gm
+    from engine.audit import AuditStore
+    from engine.llm import MockLLMClient
+
+    monkeypatch.setattr(gm, "LLM_CLIENT", MockLLMClient())
+    store = AuditStore(str(tmp_path / "audit.db"))
+    monkeypatch.setattr(gm, "AUDIT_STORE", store)
+
+    agent_a = f"test-partition-{uuid.uuid4()}"
+    agent_b = f"test-partition-{uuid.uuid4()}"
+
+    payload = {"action_type": "send_payment", "parameters": {"amount": 100}, "agent_id": agent_a}
+    assert client.post("/intercept", json=payload).status_code == 200
+    payload["agent_id"] = agent_b
+    assert client.post("/intercept", json=payload).status_code == 200
+
+    timeline = client.get("/timeline").json()
+    rows_a = [r for r in timeline if r.get("agent_id") == agent_a]
+    rows_b = [r for r in timeline if r.get("agent_id") == agent_b]
+
+    assert len(rows_a) == 1 and rows_a[0]["action_type"] == "send_payment"
+    assert len(rows_b) == 1 and rows_b[0]["action_type"] == "send_payment"
+    assert {r["agent_id"] for r in (rows_a + rows_b)} == {agent_a, agent_b}
+
+
+
 def test_health_excluded_from_rate_limit():
     for _ in range(200):
         response = client.get("/health")

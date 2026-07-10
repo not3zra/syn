@@ -6,6 +6,8 @@ import './App.css';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '';
 
+const AGENT_ID = crypto.randomUUID();
+
 const PRESET_TOOLS: Record<string, Record<string, string>> = {
   'send_payment': { amount: '100', currency: 'USD', recipient: 'alice' },
   'delete_file': { file_path: '/tmp/test.txt' },
@@ -62,6 +64,7 @@ export default function App() {
         body: JSON.stringify({
           action_type: actionType,
           parameters: parsed,
+          agent_id: AGENT_ID,
           mode: simulationMode ? 'simulation' : 'live',
         }),
       });
