@@ -305,7 +305,9 @@ class TestGatewayEndpoints:
         base_url, _ = server
         resp = httpx.get(f"{base_url}/health", timeout=10)
         assert resp.status_code == 200
-        assert resp.json() == {"status": "ok"}
+        data = resp.json()
+        assert data["status"] == "ok"
+        assert "llm" in data
 
     def test_unknown_tool_blocked(self, server):
         base_url, _ = server

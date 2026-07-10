@@ -39,7 +39,9 @@ def test_lists_registered_tools():
 def test_health_returns_ok():
     response = client.get("/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    data = response.json()
+    assert data["status"] == "ok"
+    assert "llm" in data
 
 
 def test_agent_id_partitions_timeline(tmp_path, monkeypatch):

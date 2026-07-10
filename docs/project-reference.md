@@ -162,14 +162,15 @@ cp .env.example .env
 ```
 
 ```ini
-# LLM provider — pick one:
-FIREWORKS_API_KEY="fw_..."
-GROQ_API_KEY="gsk_..."
-# Local / AMD Developer Cloud (any OpenAI-compatible endpoint):
-LLM_PROVIDER="local"
-OPENAI_BASE_URL="http://your-instance:8000/v1"
-OPENAI_API_KEY="EMPTY"
-MODEL_NAME="Qwen/Qwen3-8B"
+# LLM provider — all providers use the same LLM_* env vars
+LLM_PROVIDER=mock
+# LLM_BASE_URL=http://localhost:8000/v1
+# LLM_API_KEY=...
+# LLM_MODEL=...
+# LLM_TIMEOUT=15
+# LLM_MAX_RETRIES=2
+# LLM_TEMPERATURE=0.3
+# LLM_MAX_TOKENS=3000
 
 # Optional — Slack webhook for escalations:
 SYN_SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."
@@ -188,8 +189,8 @@ These controls were added in the post-submission hardening pass:
 | `SYN_AUDIT_DB_PATH` | `data/audit.db` | SQLite audit DB location. |
 
 Other behaviors:
-- **Startup validation:** the gateway fails to start if the configured LLM provider requires an API key that is missing.
-- **LLM timeout + fail-fast:** Fireworks/Groq calls time out after `timeout_seconds` (default 120s in `llm_config.yaml`) and fail fast (`max_retries=0`). Bootstrap generation is token-heavy (~2500 tokens) and needs the higher timeout. LLM calls run in a thread pool so the event loop is not blocked.
+- **Startup health probe:** the gateway probes the LLM on startup via `client.models.list()` (OpenAI SDK), caching `LLMStatus` with latency. `GET /health` exposes the cached status; `GET /health/llm` forces a fresh probe.
+- **LLM timeout + fail-fast:** LLM calls time out after `timeout_seconds` (per-provider default, overridable via `LLM_TIMEOUT`). Bootstrap generation is token-heavy (~2500 tokens) and the `local` provider defaults to 120s. LLM calls run in a thread pool so the event loop is not blocked.
 - **Request IDs:** every request gets a UUID `X-Request-ID` and structured logs are tagged with it.
 - **Bootstrap path sanitization:** `POST /bootstrap/approve` resolves `target_path` inside the engine config directory and rejects directory traversal.
 - **Prompt sanitization:** user-influenced values (`action_type`, `trigger`, `tool_name`) are JSON-escaped before LLM prompt interpolation to block prompt injection.
@@ -204,20 +205,22 @@ Other behaviors:
 
 ### LLM Provider Config
 
-Edit `engine/llm_config.yaml`:
+All providers use the same `OpenAIAPIClient` class — only the defaults differ:
 
 ```yaml
-# Options: mock | groq | fireworks | local (default: fireworks)
+# engine/llm_config.yaml — all values overridable via LLM_* env vars
 provider: local
 model: Qwen/Qwen3-8B
+timeout_seconds: 120.0
 ```
 
-| Provider | API Key Env Var | Free Tier |
-|----------|----------------|-----------|
-| `mock`   | None needed    | Unlimited |
-| `groq`   | `GROQ_API_KEY` | 100K tokens/day |
-| `fireworks` | `FIREWORKS_API_KEY` | Higher limits |
-| `local`  | `OPENAI_API_KEY` + `OPENAI_BASE_URL` | Any OpenAI-compatible endpoint (e.g., AMD Developer Cloud, local LLM) |
+| Provider | Default Base URL | Default Model | Use Case |
+|----------|-----------------|---------------|----------|
+| `mock` | N/A | N/A | Testing, offline demo |
+| `local` | `http://localhost:8000/v1` | `Qwen/Qwen3-8B` | AMD Developer Cloud, vLLM, local |
+| `openai` | `https://api.openai.com/v1` | `gpt-5` | Production OpenAI |
+| `groq` | `https://api.groq.com/openai/v1` | `openai/gpt-oss-120b` | Low-volume, free tier |
+| `fireworks` | `https://api.fireworks.ai/inference/v1` | `accounts/fireworks/models/glm-5p2` | Higher throughput |
 
 ### Run with Docker
 

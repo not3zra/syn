@@ -1,7 +1,7 @@
-# Provider: mock | fallback | groq | fireworks | local
+# Provider: mock | local | openai | groq | fireworks
+# All values can be overridden by LLM_PROVIDER, LLM_BASE_URL, LLM_API_KEY,
+# LLM_MODEL, LLM_TIMEOUT, and LLM_MAX_RETRIES environment variables.
+# Environment variables take precedence over this file.
 provider: local
-# Model override (used when provider=local; MODEL_NAME env var takes precedence):
 model: Qwen/Qwen3-8B
-# Timeout in seconds for LLM API calls (default: 15.0).
-# Bootstrap generation is token-heavy (~2500 tokens) and needs more time.
 timeout_seconds: 120.0

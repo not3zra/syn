@@ -11,6 +11,11 @@ data/
 ralph/
 *.egg-info/
 *.db
+*.db-journal
+
+# Docker env files (per-machine secrets)
+docker/*.env
+
 AGENTS.md
 DESIGN.md
 PRODUCT.md
@@ -25,9 +30,30 @@ handoff.md
 .idea/
 *.swp
 *.swo
+*.swn
 
 # OS files
 .DS_Store
+Thumbs.db
+Desktop.ini
 
 # Logs
 *.log
+
+# Python
+*.pyo
+*.egg
+.coverage
+coverage/
+htmlcov/
+.mypy_cache/
+.tox/
+
+# SQLite journals
+*.db-wal
+*.db-shm
+
+# Temp
+tmp/
+temp/
+*.tmp

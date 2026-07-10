@@ -63,9 +63,10 @@ AI Agent ──▶ syn Gateway ──▶ Tool
                                    │ Session Scorer   │
                                    │ Decision Tree    │
                                    ├─────────────────┤
-                                    │    LLM Provider  │
-                                    │ (Mock / Groq /   │
-                                    │  Fireworks / Local)│
+                                     │    LLM Client    │
+                                     │ (OpenAIAPIClient │
+                                     │  — one class for │
+                                     │  all providers)  │
                                    ├─────────────────┤
                                    │  Audit Store     │
                                    │  (SQLite)        │
@@ -200,27 +201,41 @@ Tool Schemas ──▶ LLM ──▶ Generated Rules ──▶ Review ──▶ 
 
 ---
 
-## Slide 9: LLM Provider Architecture
+## Slide 9: Provider Abstraction
 
-### Provider-Agnostic Design
+### One Client for All Providers
+
+All providers (local, openai, groq, fireworks) instantiate the same `OpenAIAPIClient` — the only difference is default base URL and model.
 
 ```
-create_llm_client(config)
-        │
-   ┌────┴────┬─────┬──────┐
-  Mock    Groq   Fireworks  Local (AMD)
+        LLM_* env vars + YAML config
+                  │
+           create_llm_client()
+                  │
+        ┌─────────┴────────────┐
+        │                      │
+   MockLLMClient     OpenAIAPIClient
+   (in-process)      (one class for all)
+                         │
+              ┌──────┬────┴────┬──────┐
+             local  openai   groq  fireworks
 ```
 
-| Provider | Endpoint | When to Use |
-|----------|----------|-------------|
-| `mock` | None (in-process) | Testing, offline demo |
-| `groq` | `api.groq.com` | Low-volume, free tier |
-| `fireworks` | `api.fireworks.ai` | Higher throughput |
-| `local` | Any OpenAI-compatible | **AMD Developer Cloud**, local LLMs |
+| Provider | Default Base URL | Default Model | Use Case |
+|----------|-----------------|---------------|----------|
+| `mock` | N/A | N/A | Testing, offline demo |
+| `local` | `http://localhost:8000/v1` | `Qwen/Qwen3-8B` | **AMD Developer Cloud**, vLLM, local |
+| `openai` | `https://api.openai.com/v1` | `gpt-5` | Production OpenAI |
+| `groq` | `https://api.groq.com/openai/v1` | `openai/gpt-oss-120b` | Low-volume, free tier |
+| `fireworks` | `https://api.fireworks.ai/inference/v1` | `accounts/fireworks/models/glm-5p2` | Higher throughput |
 
-### AMD Developer Cloud Setup
+### All Configuration Through `LLM_*` Env Vars
 
-Provider is set in `engine/llm_config.yaml` (can be overridden via `LLM_PROVIDER` env var):
+No provider-specific env vars. Every provider reads:
+- `LLM_PROVIDER`, `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`
+- `LLM_TIMEOUT`, `LLM_MAX_RETRIES`, `LLM_TEMPERATURE`, `LLM_MAX_TOKENS`
+
+Precedence: **env var → YAML → provider default**.
 
 ```yaml
 # engine/llm_config.yaml
@@ -230,19 +245,42 @@ timeout_seconds: 120.0
 ```
 
 ```ini
-# .env
-OPENAI_BASE_URL=http://your-instance:8000/v1
-OPENAI_API_KEY=EMPTY
-MODEL_NAME=Qwen/Qwen3-8B
+# .env — same LLM_* vars for every provider
+LLM_PROVIDER=local
+LLM_BASE_URL=http://your-instance:8000/v1
+LLM_API_KEY=EMPTY
+LLM_MODEL=Qwen/Qwen3-8B
 ```
 
-The `local` provider reuses the `FallbackLLMClient` class — fully compatible with any OpenAI API endpoint.
+### Deprecation Compatibility
+
+Old env vars (`OPENAI_API_KEY`, `OPENAI_BASE_URL`, `MODEL_NAME`, `GROQ_API_KEY`, `FIREWORKS_API_KEY`) still work with a `DeprecationWarning`. The `fallback` provider is an alias for `groq`.
+
+### Rich Health Endpoint
+
+`GET /health` returns cached LLM status with latency:
+
+```json
+{
+  "status": "ok",
+  "llm": {
+    "healthy": true,
+    "provider": "local",
+    "model": "Qwen/Qwen3-8B",
+    "endpoint": "http://your-instance:8000/v1",
+    "latency_ms": 112,
+    "checked_at": "2026-07-11T..."
+  }
+}
+```
+
+`GET /health/llm` forces a fresh probe. Gateway status stays `"ok"` even when LLM is degraded — the deterministic firewall works without an LLM.
 
 ---
 
 ## Slide 10: Test Suite
 
-### 15 Test Files · 283 Tests · 95% Pass Rate
+### 15 Test Files · 295 Tests · 95% Pass Rate
 
 | File | Tests | What It Covers |
 |------|:-----:|----------------|
@@ -254,7 +292,7 @@ The `local` provider reuses the `FallbackLLMClient` class — fully compatible w
 | `test_bootstrap.py` | 28 | Introspection, generation, validation, YAML |
 | `test_live_api_verification.py` | 23 | Live scenarios against running gateway |
 | `test_regulatory.py` | 17 | EU AI Act tiers, US regime flags |
-| `test_llm.py` | 18 | Provider factory, prompt building, injection prevention |
+| `test_llm.py` | 30 | Provider factory, per-provider defaults, env override, connection check |
 | `test_e2e_smoke.py` | 6 | End-to-end HTTP + SQLite verification |
 | `test_demo_auth.py` | 8 | Demo-token tripwire gating |
 | `test_admin_reset.py` | 4 | Admin reset endpoint |
@@ -265,8 +303,8 @@ The `local` provider reuses the `FallbackLLMClient` class — fully compatible w
 ### Test Results Summary
 
 ```
-283 tests · 95% pass rate (Windows: ~46 temp-file cleanup issues)
-270 passed  ✅  Core logic, risk engine, API, bootstrap
+295 tests · 95% pass rate (Windows: ~46 temp-file cleanup issues)
+282 passed  ✅  Core logic, risk engine, API, bootstrap, LLM provider
  13 failed  ❌  All Windows-specific (file locking, encoding)
  38 errors  ⚠️  All Windows SQLite temp file cleanup
 ```
@@ -365,7 +403,8 @@ npm run dev
 ### Run Tests
 ```bash
 pip install -r requirements.txt pytest httpx
-pytest tests/ -v
+pytest tests/ -v -p no:dash
+# (-p no:dash works around a local dash/flask conflict)
 ```
 
 ### Environment
@@ -381,7 +420,7 @@ cp .env.example .env
 ```
 syn/
 ├── gateway/           # FastAPI server
-│   ├── main.py        # Routes: intercept, bootstrap, resolve
+│   ├── main.py        # Routes: intercept, bootstrap, resolve, /health, /health/llm
 │   └── Dockerfile
 ├── engine/            # Risk engine
 │   ├── evaluate.py    # Orchestrator
@@ -395,12 +434,12 @@ syn/
 │   ├── session.py     # Pattern matching, cumulative
 │   ├── regulatory.py  # EU AI Act tiers
 │   ├── audit.py       # SQLite store
-│   ├── llm.py         # Provider abstraction
+│   ├── llm.py         # Provider abstraction (OpenAIAPIClient, LLMStatus)
 │   ├── bootstrap.py   # AI auto-config
 │   ├── slack.py       # Notifications
 │   └── *.yaml          # Config files
 ├── frontend/          # React + Vite + TypeScript
-├── tests/             # 15 test files, 283 tests
+├── tests/             # 15 test files, 295 tests
 ├── docs/              # PRD, decision log, project ref
 ├── docker-compose.yml
 └── pyproject.toml

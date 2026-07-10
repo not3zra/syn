@@ -70,29 +70,6 @@ def evaluate(
         pattern_matched=session_info["pattern_matched"],
     )
 
-    session_decision, session_trigger = apply_session_branches(session_info, config)
-    if session_decision is not None:
-        if session_trigger and session_trigger.startswith("session:pattern_matched"):
-            pair = session_info.get("matched_pair", "unknown")
-            reason = (
-                f"Recognized risky sequence '{pair}' "
-                "(for example, a reconnaissance step followed by an action)."
-            )
-        else:
-            reason = (
-                f"Cumulative session severity {session_info['cumulative_severity']:.0f} "
-                f"exceeds the threshold of {session_threshold}."
-            )
-        return RiskEngineResult(
-            decision=session_decision,
-            trigger=session_trigger or "session:escalated",
-            reason=reason,
-            factor_scores=factor_scores,
-            session_data=session_data,
-            regulatory_tier=regulatory_tier,
-            us_regime_flags=us_regime_flags,
-        )
-
     floor_decision, floor_trigger = apply_decision_tree(factor_scores, config)
 
     if floor_decision is not None:
@@ -109,6 +86,29 @@ def evaluate(
         return RiskEngineResult(
             decision=floor_decision,
             trigger=floor_trigger or "decision_tree:floor",
+            reason=reason,
+            factor_scores=factor_scores,
+            session_data=session_data,
+            regulatory_tier=regulatory_tier,
+            us_regime_flags=us_regime_flags,
+        )
+
+    session_decision, session_trigger = apply_session_branches(session_info, config)
+    if session_decision is not None:
+        if session_trigger and session_trigger.startswith("session:pattern_matched"):
+            pair = session_info.get("matched_pair", "unknown")
+            reason = (
+                f"Recognized risky sequence '{pair}' "
+                "(for example, a reconnaissance step followed by an action)."
+            )
+        else:
+            reason = (
+                f"Cumulative session severity {session_info['cumulative_severity']:.0f} "
+                f"exceeds the threshold of {session_threshold}."
+            )
+        return RiskEngineResult(
+            decision=session_decision,
+            trigger=session_trigger or "session:escalated",
             reason=reason,
             factor_scores=factor_scores,
             session_data=session_data,

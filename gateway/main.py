@@ -6,6 +6,7 @@ import os
 import time
 import uuid
 from collections import defaultdict, deque
+from dataclasses import asdict
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
@@ -40,7 +41,7 @@ load_dotenv()
 
 from engine.evaluate import evaluate as risk_evaluate
 from engine.execution import execute_tool
-from engine.llm import create_llm_client, build_explanation_prompt
+from engine.llm import LLMStatus, create_llm_client, build_explanation_prompt
 from engine.audit import AuditStore
 from engine.slack import SlackNotifier
 from engine.session import generate_session_id
@@ -177,9 +178,15 @@ def assert_demo_token_configured_for_production() -> None:
         )
 
 
+_last_llm_status: LLMStatus | None = None
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
+    global _last_llm_status
     assert_demo_token_configured_for_production()
+    loop = asyncio.get_event_loop()
+    _last_llm_status = await loop.run_in_executor(_THREAD_POOL, LLM_CLIENT.check_connection)
     yield
 
 
@@ -408,7 +415,18 @@ def _background_bootstrap_generate(tool_name: str, parameters: dict):
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    if _last_llm_status is None:
+        return {"status": "ok", "llm": None}
+    return {"status": "ok", "llm": asdict(_last_llm_status)}
+
+
+@app.get("/health/llm")
+def health_llm():
+    global _last_llm_status
+    _last_llm_status = LLM_CLIENT.check_connection()
+    if _last_llm_status is None:
+        return {"status": "ok", "llm": None}
+    return {"status": "ok", "llm": asdict(_last_llm_status)}
 
 
 @app.get("/tools")

@@ -1,7 +1,11 @@
 import json
 import os
 import re
+import time
+import warnings
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 
@@ -74,6 +78,423 @@ class LLMClient(ABC):
         output_schema: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         ...
+
+    @abstractmethod
+    def check_connection(self) -> "LLMStatus":
+        ...
+
+
+@dataclass
+class LLMStatus:
+    healthy: bool
+    provider: str
+    model: str
+    endpoint: str
+    latency_ms: float | None
+    checked_at: datetime | None
+    message: str
+
+
+@dataclass
+class ProviderConfig:
+    name: str
+    default_base_url: str
+    default_model: str
+    default_timeout: float = 15.0
+    default_max_retries: int = 2
+    default_temperature: float = 0.3
+    default_max_tokens: int = 3000
+
+
+PROVIDER_DEFAULTS: dict[str, ProviderConfig] = {
+    "local": ProviderConfig(
+        name="local",
+        default_base_url="http://localhost:8000/v1",
+        default_model="Qwen/Qwen3-8B",
+        default_timeout=120.0,
+        default_max_retries=0,
+    ),
+    "fireworks": ProviderConfig(
+        name="fireworks",
+        default_base_url="https://api.fireworks.ai/inference/v1",
+        default_model="accounts/fireworks/models/glm-5p2",
+        default_max_retries=0,
+    ),
+    "groq": ProviderConfig(
+        name="groq",
+        default_base_url="https://api.groq.com/openai/v1",
+        default_model="openai/gpt-oss-120b",
+    ),
+    "openai": ProviderConfig(
+        name="openai",
+        default_base_url="https://api.openai.com/v1",
+        default_model="gpt-5",
+    ),
+}
+
+
+def _deprecated_env(old_name: str, new_name: str) -> str | None:
+    value = os.environ.get(old_name)
+    if value is not None:
+        warnings.warn(
+            f"{old_name} is deprecated. Use {new_name} instead.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+    return value
+
+
+def create_llm_client(config: dict[str, Any]) -> LLMClient:
+    provider = os.environ.get("LLM_PROVIDER") or config.get("provider", "mock")
+
+    if provider == "mock":
+        return MockLLMClient()
+
+    if provider == "fallback":
+        warnings.warn(
+            "'fallback' provider is deprecated. Use 'groq' instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        provider = "groq"
+
+    if provider not in PROVIDER_DEFAULTS:
+        raise ValueError(f"Unknown LLM provider: {provider}")
+
+    defaults = PROVIDER_DEFAULTS[provider]
+
+    api_key = (
+        os.environ.get("LLM_API_KEY")
+        or _deprecated_env("OPENAI_API_KEY", "LLM_API_KEY")
+        or _deprecated_env("FIREWORKS_API_KEY", "LLM_API_KEY")
+        or _deprecated_env("GROQ_API_KEY", "LLM_API_KEY")
+        or config.get("api_key")
+        or "EMPTY"
+    )
+
+    base_url = (
+        os.environ.get("LLM_BASE_URL")
+        or _deprecated_env("OPENAI_BASE_URL", "LLM_BASE_URL")
+        or config.get("base_url")
+        or defaults.default_base_url
+    )
+
+    model = (
+        os.environ.get("LLM_MODEL")
+        or _deprecated_env("MODEL_NAME", "LLM_MODEL")
+        or config.get("model")
+        or defaults.default_model
+    )
+
+    timeout = float(
+        os.environ.get("LLM_TIMEOUT")
+        or config.get("timeout_seconds")
+        or defaults.default_timeout
+    )
+
+    max_retries = int(
+        os.environ.get("LLM_MAX_RETRIES")
+        or config.get("max_retries")
+        or defaults.default_max_retries
+    )
+
+    temperature = float(
+        os.environ.get("LLM_TEMPERATURE")
+        or config.get("temperature")
+        or defaults.default_temperature
+    )
+
+    max_tokens = int(
+        os.environ.get("LLM_MAX_TOKENS")
+        or config.get("max_tokens")
+        or defaults.default_max_tokens
+    )
+
+    return OpenAIAPIClient(
+        provider=provider,
+        api_key=api_key,
+        base_url=base_url,
+        model=model,
+        timeout_seconds=timeout,
+        max_retries=max_retries,
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
+
+
+class OpenAIAPIClient(LLMClient):
+    def __init__(
+        self,
+        provider: str,
+        api_key: str,
+        base_url: str,
+        model: str,
+        timeout_seconds: float = 15.0,
+        max_retries: int = 2,
+        temperature: float = 0.3,
+        max_tokens: int = 3000,
+    ):
+        self.provider = provider
+        self.api_key = api_key
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+        self.timeout_seconds = timeout_seconds
+        self.max_retries = max_retries
+        self.temperature = temperature
+        self.max_tokens = max_tokens
+        self._client = None
+
+    def _ensure_client(self):
+        if self._client is not None:
+            return
+        from openai import OpenAI
+        self._client = OpenAI(
+            api_key=self.api_key,
+            base_url=self.base_url,
+            timeout=self.timeout_seconds,
+            max_retries=self.max_retries,
+        )
+
+    def _fallback_to_mock(self, prompt: str) -> dict[str, Any]:
+        mock = MockLLMClient()
+        return mock.generate(prompt)
+
+    def generate(
+        self,
+        prompt: str,
+        output_schema: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        self._ensure_client()
+
+        if output_schema and output_schema.get("type") == "bootstrap_rules":
+            try:
+                response = self._client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": BS_SYSTEM_PROMPT},
+                        {"role": "user", "content": prompt},
+                    ],
+                    response_format={"type": "json_object"},
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens,
+                )
+                text = response.choices[0].message.content or ""
+                result = _tolerant_json_parse(text)
+                if result is not None and isinstance(result.get("tools"), list):
+                    return {"tools": result["tools"]}
+                if result is not None and isinstance(result.get("tools"), dict):
+                    return {"tools": list(result["tools"].values())}
+                return {"tools": []}
+            except Exception:
+                return {"tools": []}
+
+        for attempt in range(2):
+            try:
+                sys_prompt = RETRY_SYSTEM_PROMPT if attempt == 1 else EXPLAIN_SYSTEM_PROMPT
+                response = self._client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": sys_prompt},
+                        {"role": "user", "content": prompt},
+                    ],
+                    response_format={"type": "json_object"},
+                    temperature=self.temperature,
+                    max_tokens=500,
+                )
+                text = response.choices[0].message.content or ""
+                result = _tolerant_json_parse(text)
+                if result is not None:
+                    explanation = result.get("explanation", "")
+                    remediation = result.get("remediation", "")
+                    if _has_leaked_reasoning(explanation) or _has_leaked_reasoning(remediation):
+                        continue
+                    return {"explanation": explanation, "remediation": remediation}
+            except Exception:
+                return self._fallback_to_mock(prompt)
+        return {
+            "explanation": "This action was escalated for human review based on the governance policy. Please check the trigger and factor scores for details.",
+            "remediation": "Contact your administrator for assistance.",
+        }
+
+    def check_connection(self) -> LLMStatus:
+        t0 = time.monotonic()
+        try:
+            self._ensure_client()
+            self._client.models.list()
+            elapsed_ms = round((time.monotonic() - t0) * 1000)
+            return LLMStatus(
+                healthy=True,
+                provider=self.provider,
+                model=self.model,
+                endpoint=self.base_url,
+                latency_ms=elapsed_ms,
+                checked_at=datetime.now(timezone.utc),
+                message="Connected",
+            )
+        except Exception as e:
+            return LLMStatus(
+                healthy=False,
+                provider=self.provider,
+                model=self.model,
+                endpoint=self.base_url,
+                latency_ms=None,
+                checked_at=datetime.now(timezone.utc),
+                message=str(e),
+            )
+
+
+class MockLLMClient(LLMClient):
+    def __init__(self) -> None:
+        self._call_count = 0
+
+    def generate(
+        self,
+        prompt: str,
+        output_schema: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        self._call_count += 1
+
+        if output_schema and output_schema.get("type") == "bootstrap_rules":
+            return self._mock_bootstrap_rules(prompt)
+
+        action_type = "the action"
+        decision = "evaluated"
+        trigger = "unknown"
+        reason = None
+
+        top_factor = None
+        for line in prompt.split("\n"):
+            if "Action type:" in line:
+                parts = line.split("Action type:")
+                if len(parts) > 1:
+                    action_type = _js_strip(parts[1].strip().split(",")[0].strip())
+            if "Decision:" in line:
+                parts = line.split("Decision:")
+                if len(parts) > 1:
+                    decision = _js_strip(parts[1].strip().split(",")[0].strip())
+            if "Triggered by:" in line:
+                parts = line.split("Triggered by:")
+                if len(parts) > 1:
+                    trigger = _js_strip(parts[1].strip())
+            if "The most significant contributing factor is " in line:
+                raw = line.split("The most significant contributing factor is ")[1].strip()
+                top_factor = _js_strip(raw.split(".")[0].strip())
+            if "System reason:" in line:
+                reason = line.split("System reason:", 1)[1].strip()
+
+        explanation = _get_mock_explanation(
+            action_type, decision, trigger, top_factor=top_factor, reason=reason
+        )
+        remediation = (
+            f"To proceed with this {action_type} action, please request a security review "
+            f"or contact your administrator for approval."
+        )
+
+        return {
+            "explanation": explanation,
+            "remediation": remediation,
+        }
+
+    def check_connection(self) -> LLMStatus:
+        return LLMStatus(
+            healthy=True,
+            provider="mock",
+            model="mock",
+            endpoint="N/A",
+            latency_ms=0,
+            checked_at=datetime.now(timezone.utc),
+            message="Mock provider — no real connection needed",
+        )
+
+    def _mock_bootstrap_rules(self, prompt: str) -> dict[str, Any]:
+        schemas = _tolerant_json_parse(prompt)
+        if isinstance(schemas, list):
+            tool_names = [s.get("name", "unknown_tool") for s in schemas if isinstance(s, dict)]
+        else:
+            tool_names = []
+
+        rules = []
+        for name in tool_names:
+            rule = {
+                "tool_name": name,
+                "severity_rules": [],
+                "policy_rules": [],
+                "data_sensitivity_rules": [],
+                "tool_trust_tier": "official",
+                "anomaly_lookback": 20,
+                "reasoning": f"Generated security rules for {name} based on fintech context.",
+            }
+            if name == "send_payment":
+                rule["severity_rules"] = [
+                    {"max_amount": 1000, "score": 20},
+                    {"max_amount": 5000, "score": 50},
+                    {"max_amount": 50000, "score": 80},
+                    {"max_amount": None, "score": 95},
+                ]
+                rule["policy_rules"] = [
+                    {
+                        "description": "No payments above $5,000 to external recipients without approval",
+                        "condition": {"field": "amount", "operator": ">", "value": 5000},
+                        "score": 100,
+                    }
+                ]
+                rule["data_sensitivity_rules"] = [
+                    {"field": "recipient", "pattern": "external", "score": 40},
+                    {"field": "currency", "pattern": ".*", "score": 0},
+                ]
+            elif name == "delete_file":
+                rule["severity_rules"] = [
+                    {"path_pattern": "/etc/", "score": 95},
+                    {"path_pattern": "/data/prod/", "score": 90},
+                    {"path_pattern": ".*", "score": 60},
+                ]
+                rule["data_sensitivity_rules"] = [
+                    {"field": "file_path", "pattern": "(customer|users|accounts)", "score": 80},
+                    {"field": "file_path", "pattern": ".*", "score": 10},
+                ]
+                rule["tool_trust_tier"] = "verified"
+                rule["anomaly_lookback"] = 10
+            elif name == "query_database":
+                rule["severity_rules"] = [
+                    {"query_type": "ddl", "score": 90},
+                    {"query_type": "dml", "score": 40},
+                    {"query_type": "select", "score": 10},
+                    {"query_type": None, "score": 30},
+                ]
+                rule["data_sensitivity_rules"] = [
+                    {"field": "query", "pattern": "(DROP|ALTER|TRUNCATE|DELETE|INSERT|UPDATE)", "score": 100},
+                    {"field": "query", "pattern": "(users|customers|accounts|pii|ssn)", "score": 70},
+                    {"field": "query", "pattern": ".*", "score": 10},
+                ]
+                rule["policy_rules"] = [
+                    {
+                        "description": "No destructive DDL operations",
+                        "condition": {"field": "query", "operator": "matches", "value": "^(DROP|ALTER|TRUNCATE|DELETE|INSERT|UPDATE)"},
+                        "score": 100,
+                    }
+                ]
+            elif name == "check_balance":
+                rule["severity_rules"] = [{"max_amount": None, "score": 15}]
+                rule["data_sensitivity_rules"] = [
+                    {"field": "account_id", "pattern": ".*", "score": 20},
+                ]
+            else:
+                rule["severity_rules"] = [{"max_amount": 1000, "score": 30}]
+                rule["tool_trust_tier"] = "unknown"
+
+            rules.append(rule)
+
+        return {"tools": rules}
+
+
+def _js(val: str) -> str:
+    return json.dumps(val, ensure_ascii=False)
+
+
+def _js_strip(val: str) -> str:
+    if len(val) >= 2 and val.startswith('"') and val.endswith('"'):
+        return val[1:-1]
+    return val
 
 
 def _format_pair(trigger: str) -> str:
@@ -157,314 +578,6 @@ def _get_mock_explanation(
         f"The {action_type} action was {decision} based on the combined assessment of all "
         f"six risk factors. {base.capitalize()} after the weighted risk score evaluation."
     )
-
-
-class MockLLMClient(LLMClient):
-    def __init__(self) -> None:
-        self._call_count = 0
-
-    def generate(
-        self,
-        prompt: str,
-        output_schema: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        self._call_count += 1
-
-        if output_schema and output_schema.get("type") == "bootstrap_rules":
-            return self._mock_bootstrap_rules(prompt)
-
-        action_type = "the action"
-        decision = "evaluated"
-        trigger = "unknown"
-        reason = None
-
-        top_factor = None
-        for line in prompt.split("\n"):
-            if "Action type:" in line:
-                parts = line.split("Action type:")
-                if len(parts) > 1:
-                    action_type = _js_strip(parts[1].strip().split(",")[0].strip())
-            if "Decision:" in line:
-                parts = line.split("Decision:")
-                if len(parts) > 1:
-                    decision = _js_strip(parts[1].strip().split(",")[0].strip())
-            if "Triggered by:" in line:
-                parts = line.split("Triggered by:")
-                if len(parts) > 1:
-                    trigger = _js_strip(parts[1].strip())
-            if "The most significant contributing factor is " in line:
-                raw = line.split("The most significant contributing factor is ")[1].strip()
-                top_factor = _js_strip(raw.split(".")[0].strip())
-            if "System reason:" in line:
-                reason = line.split("System reason:", 1)[1].strip()
-
-        explanation = _get_mock_explanation(
-            action_type, decision, trigger, top_factor=top_factor, reason=reason
-        )
-        remediation = (
-            f"To proceed with this {action_type} action, please request a security review "
-            f"or contact your administrator for approval."
-        )
-
-        return {
-            "explanation": explanation,
-            "remediation": remediation,
-        }
-
-    def _mock_bootstrap_rules(self, prompt: str) -> dict[str, Any]:
-        schemas = _tolerant_json_parse(prompt)
-        if isinstance(schemas, list):
-            tool_names = [s.get("name", "unknown_tool") for s in schemas if isinstance(s, dict)]
-        else:
-            tool_names = []
-
-        rules = []
-        for name in tool_names:
-            rule = {
-                "tool_name": name,
-                "severity_rules": [],
-                "policy_rules": [],
-                "data_sensitivity_rules": [],
-                "tool_trust_tier": "official",
-                "anomaly_lookback": 20,
-                "reasoning": f"Generated security rules for {name} based on fintech context.",
-            }
-            if name == "send_payment":
-                rule["severity_rules"] = [
-                    {"max_amount": 1000, "score": 20},
-                    {"max_amount": 5000, "score": 50},
-                    {"max_amount": 50000, "score": 80},
-                    {"max_amount": None, "score": 95},
-                ]
-                rule["policy_rules"] = [
-                    {
-                        "description": "No payments above $5,000 to external recipients without approval",
-                        "condition": {"field": "amount", "operator": ">", "value": 5000},
-                        "score": 100,
-                    }
-                ]
-                rule["data_sensitivity_rules"] = [
-                    {"field": "recipient", "pattern": "external", "score": 40},
-                    {"field": "currency", "pattern": ".*", "score": 0},
-                ]
-            elif name == "delete_file":
-                rule["severity_rules"] = [
-                    {"path_pattern": "/etc/", "score": 95},
-                    {"path_pattern": "/data/prod/", "score": 90},
-                    {"path_pattern": ".*", "score": 60},
-                ]
-                rule["data_sensitivity_rules"] = [
-                    {"field": "file_path", "pattern": "(customer|users|accounts)", "score": 80},
-                    {"field": "file_path", "pattern": ".*", "score": 10},
-                ]
-                rule["tool_trust_tier"] = "verified"
-                rule["anomaly_lookback"] = 10
-            elif name == "query_database":
-                rule["severity_rules"] = [
-                    {"query_type": "ddl", "score": 90},
-                    {"query_type": "dml", "score": 40},
-                    {"query_type": "select", "score": 10},
-                    {"query_type": None, "score": 30},
-                ]
-                rule["data_sensitivity_rules"] = [
-                    {"field": "query", "pattern": "(DROP|ALTER|TRUNCATE|DELETE|INSERT|UPDATE)", "score": 100},
-                    {"field": "query", "pattern": "(users|customers|accounts|pii|ssn)", "score": 70},
-                    {"field": "query", "pattern": ".*", "score": 10},
-                ]
-                rule["policy_rules"] = [
-                    {
-                        "description": "No destructive DDL operations",
-                        "condition": {"field": "query", "operator": "matches", "value": "^(DROP|ALTER|TRUNCATE|DELETE|INSERT|UPDATE)"},
-                        "score": 100,
-                    }
-                ]
-            elif name == "check_balance":
-                rule["severity_rules"] = [{"max_amount": None, "score": 15}]
-                rule["data_sensitivity_rules"] = [
-                    {"field": "account_id", "pattern": ".*", "score": 20},
-                ]
-            else:
-                rule["severity_rules"] = [{"max_amount": 1000, "score": 30}]
-                rule["tool_trust_tier"] = "unknown"
-
-            rules.append(rule)
-
-        return {"tools": rules}
-
-
-class FallbackLLMClient(LLMClient):
-    def __init__(
-        self,
-        api_key: str | None = None,
-        base_url: str = "https://api.groq.com/openai/v1",
-        model: str = "llama-3.3-70b-versatile",
-        timeout_seconds: float = 15.0,
-    ):
-        self.api_key = api_key or os.environ.get("GROQ_API_KEY") or os.environ.get("OPENAI_API_KEY")
-        self.base_url = base_url
-        self.model = model
-        self.timeout_seconds = timeout_seconds
-        self._client = None
-
-    def _ensure_client(self):
-        if self._client is not None:
-            return
-        if not self.api_key:
-            raise ValueError("GROQ_API_KEY or OPENAI_API_KEY is required")
-        from openai import OpenAI
-        self._client = OpenAI(api_key=self.api_key, base_url=self.base_url, timeout=self.timeout_seconds)
-
-    def _fallback_to_mock(self, prompt: str) -> dict[str, Any]:
-        mock = MockLLMClient()
-        return mock.generate(prompt)
-
-    def generate(
-        self,
-        prompt: str,
-        output_schema: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        self._ensure_client()
-
-        if output_schema and output_schema.get("type") == "bootstrap_rules":
-            try:
-                response = self._client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": BS_SYSTEM_PROMPT},
-                        {"role": "user", "content": prompt},
-                    ],
-                    response_format={"type": "json_object"},
-                    temperature=0.3,
-                    max_tokens=3000,
-                )
-                text = response.choices[0].message.content or ""
-                result = _tolerant_json_parse(text)
-                if result is not None and isinstance(result.get("tools"), list):
-                    return {"tools": result["tools"]}
-                if result is not None and isinstance(result.get("tools"), dict):
-                    return {"tools": list(result["tools"].values())}
-                return {"tools": []}
-            except Exception:
-                return {"tools": []}
-
-        # Explanation generation with retry on reasoning leaks
-        for attempt in range(2):
-            try:
-                sys_prompt = RETRY_SYSTEM_PROMPT if attempt == 1 else EXPLAIN_SYSTEM_PROMPT
-                response = self._client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": sys_prompt},
-                        {"role": "user", "content": prompt},
-                    ],
-                    response_format={"type": "json_object"},
-                    temperature=0.3,
-                    max_tokens=500,
-                )
-                text = response.choices[0].message.content or ""
-                result = _tolerant_json_parse(text)
-                if result is not None:
-                    explanation = result.get("explanation", "")
-                    remediation = result.get("remediation", "")
-                    if _has_leaked_reasoning(explanation) or _has_leaked_reasoning(remediation):
-                        continue
-                    return {"explanation": explanation, "remediation": remediation}
-            except Exception:
-                return self._fallback_to_mock(prompt)
-        return {
-            "explanation": "This action was escalated for human review based on the governance policy. Please check the trigger and factor scores for details.",
-            "remediation": "Contact your administrator for assistance.",
-        }
-
-
-class FireworksLLMClient(FallbackLLMClient):
-    def __init__(
-        self,
-        api_key: str | None = None,
-        base_url: str = "https://api.fireworks.ai/inference/v1",
-        model: str = "accounts/fireworks/models/glm-5p2",
-        timeout_seconds: float = 15.0,
-    ):
-        self.api_key = api_key or os.environ.get("FIREWORKS_API_KEY") or os.environ.get("OPENAI_API_KEY")
-        self.base_url = base_url
-        self.model = model
-        self.timeout_seconds = timeout_seconds
-        self._client = None
-
-    def _ensure_client(self):
-        if self._client is not None:
-            return
-        if not self.api_key:
-            raise ValueError(
-                "FIREWORKS_API_KEY or OPENAI_API_KEY is required for the Fireworks LLM provider."
-            )
-        from openai import OpenAI
-        self._client = OpenAI(
-            api_key=self.api_key,
-            base_url=self.base_url,
-            timeout=self.timeout_seconds,
-            max_retries=0,
-        )
-
-
-def create_llm_client(config: dict[str, Any]) -> LLMClient:
-    provider = os.environ.get("LLM_PROVIDER") or config.get("provider", "mock")
-
-    if provider == "mock":
-        return MockLLMClient()
-
-    if provider in ("fallback", "groq"):
-        key = config.get("api_key") or os.environ.get("GROQ_API_KEY") or os.environ.get("OPENAI_API_KEY")
-        if not key:
-            raise ValueError(
-                "GROQ_API_KEY or OPENAI_API_KEY is required for 'fallback'/'groq' LLM provider. "
-                "Set the required environment variable or switch provider to 'mock'."
-            )
-        return FallbackLLMClient(
-            api_key=config.get("api_key"),
-            base_url=config.get("base_url", "https://api.groq.com/openai/v1"),
-            model=config.get("model", "llama-3.3-70b-versatile"),
-            timeout_seconds=float(config.get("timeout_seconds", 15.0)),
-        )
-
-    if provider == "fireworks":
-        key = config.get("api_key") or os.environ.get("FIREWORKS_API_KEY") or os.environ.get("OPENAI_API_KEY")
-        if not key:
-            raise ValueError(
-                "FIREWORKS_API_KEY or OPENAI_API_KEY is required for 'fireworks' LLM provider. "
-                "Set the required environment variable or switch provider to 'mock'."
-            )
-        return FireworksLLMClient(
-            api_key=config.get("api_key"),
-            base_url=config.get("base_url", "https://api.fireworks.ai/inference/v1"),
-            model=config.get("model", "accounts/fireworks/models/llama-v3p3-70b-instruct"),
-            timeout_seconds=float(config.get("timeout_seconds", 15.0)),
-        )
-
-    if provider == "local":
-        key = os.environ.get("OPENAI_API_KEY", "EMPTY")
-        base_url = os.environ.get("OPENAI_BASE_URL", "http://localhost:8000/v1")
-        model = os.environ.get("MODEL_NAME", config.get("model", "Qwen/Qwen3-8B"))
-        return FallbackLLMClient(
-            api_key=key,
-            base_url=base_url,
-            model=model,
-            timeout_seconds=float(config.get("timeout_seconds", 120.0)),
-        )
-
-    raise ValueError(f"Unknown LLM provider: {provider}")
-
-
-def _js(val: str) -> str:
-    """JSON-encode a string value for safe prompt interpolation."""
-    return json.dumps(val, ensure_ascii=False)
-
-
-def _js_strip(val: str) -> str:
-    """Strip outer JSON quotes from a value, if present."""
-    if len(val) >= 2 and val.startswith('"') and val.endswith('"'):
-        return val[1:-1]
-    return val
 
 
 def build_explanation_prompt(

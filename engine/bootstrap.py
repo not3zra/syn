@@ -134,27 +134,61 @@ def _yaml_quote(val: str) -> str:
     return val
 
 
+def _render_yaml_list(items: list, indent: int, key: str | None = None) -> list[str]:
+    lines: list[str] = []
+    if key is not None:
+        lines.append(f"{' ' * indent}{key}:")
+    for item in items:
+        if isinstance(item, dict):
+            lines.append(f"{' ' * (indent + 2)}-")
+            for sk, sv in item.items():
+                if sk is None:
+                    continue
+                lines.append(_render_yaml_val(sv, indent + 4, key=sk))
+        elif isinstance(item, list):
+            lines.append(f"{' ' * (indent + 2)}-")
+            lines.extend(_render_yaml_list(item, indent + 4))
+        elif item is None:
+            lines.append(f"{' ' * (indent + 2)}- null")
+        else:
+            pad = " " * (indent + 2)
+            it = _yaml_quote(str(item)) if isinstance(item, str) else str(item)
+            lines.append(f"{pad}- {it}")
+    return lines
+
+
 def _render_yaml_val(val: Any, indent: int, key: str | None = None) -> str:
-    pad = " " * indent
-    prefix = f"{pad}{key}:" if key else f"{pad}-"
     if val is None:
+        pad = " " * indent
+        prefix = f"{pad}{key}:" if key else f"{pad}-"
         return f"{prefix} null"
     if isinstance(val, bool):
+        pad = " " * indent
+        prefix = f"{pad}{key}:" if key else f"{pad}-"
         return f"{prefix} {'true' if val else 'false'}"
     if isinstance(val, (int, float)):
+        pad = " " * indent
+        prefix = f"{pad}{key}:" if key else f"{pad}-"
         return f"{prefix} {val}"
     if isinstance(val, str):
+        pad = " " * indent
+        prefix = f"{pad}{key}:" if key else f"{pad}-"
         return f"{prefix} {_yaml_quote(val)}"
     if isinstance(val, dict):
-        lines = [f"{pad}{key}:"]
+        pad = " " * indent
+        if key is None:
+            lines = [f"{pad}-"]
+        else:
+            lines = [f"{pad}{key}:"]
         for sk, sv in val.items():
+            if sk is None:
+                continue
             lines.append(_render_yaml_val(sv, indent + 2, key=sk))
         return "\n".join(lines)
     if isinstance(val, list):
-        lines = [f"{pad}{key}:"]
-        for item in val:
-            lines.append(_render_yaml_val(item, indent + 2))
-        return "\n".join(lines)
+        return "\n".join(_render_yaml_list(val, indent, key=key))
+    pad = " " * indent
+    prefix = f"{pad}{key}:" if key else f"{pad}-"
     return f"{prefix} {val}"
 
 
@@ -163,7 +197,7 @@ def rules_to_yaml(tools: list[dict[str, Any]]) -> str:
         return "tools: {}"
     lines = ["tools:"]
     for tool in tools:
-        name = tool.get("tool_name", "unknown")
+        name = tool.get("tool_name") or "unknown"
         reasoning = tool.get("reasoning", "")
         lines.append(f"  {name}:")
         if reasoning:
