@@ -21,54 +21,64 @@ CONFIG = load_config()
 
 class TestSeverity:
     def test_send_payment_low_amount(self):
-        assert score_severity("send_payment", {"amount": 50}, CONFIG) == 20
+        assert score_severity("send_payment", {"amount": 50}, CONFIG)[0] == 20
 
     def test_send_payment_medium_amount(self):
-        assert score_severity("send_payment", {"amount": 3000}, CONFIG) == 50
+        assert score_severity("send_payment", {"amount": 3000}, CONFIG)[0] == 50
 
     def test_send_payment_high_amount(self):
-        assert score_severity("send_payment", {"amount": 8000}, CONFIG) == 80
+        assert score_severity("send_payment", {"amount": 8000}, CONFIG)[0] == 80
 
     def test_send_payment_very_high(self):
-        assert score_severity("send_payment", {"amount": 100000}, CONFIG) == 95
+        assert score_severity("send_payment", {"amount": 100000}, CONFIG)[0] == 95
+
+    def test_send_payment_invalid_amount(self):
+        score, reason = score_severity("send_payment", {"amount": -5}, CONFIG)
+        assert score == 95
+        assert reason and "amount" in reason.lower()
 
     def test_delete_file_prod(self):
-        assert score_severity("delete_file", {"file_path": "/data/prod/db.sqlite"}, CONFIG) == 90
+        assert score_severity("delete_file", {"file_path": "/data/prod/db.sqlite"}, CONFIG)[0] == 90
 
     def test_delete_file_etc(self):
-        assert score_severity("delete_file", {"file_path": "/etc/passwd"}, CONFIG) == 95
+        assert score_severity("delete_file", {"file_path": "/etc/passwd"}, CONFIG)[0] == 95
 
     def test_delete_file_other(self):
-        assert score_severity("delete_file", {"file_path": "/tmp/test.txt"}, CONFIG) == 60
+        assert score_severity("delete_file", {"file_path": "/tmp/test.txt"}, CONFIG)[0] == 60
 
     def test_query_database_select(self):
-        assert score_severity("query_database", {"query": "SELECT * FROM users"}, CONFIG) == 10
+        assert score_severity("query_database", {"query": "SELECT * FROM users"}, CONFIG)[0] == 10
 
     def test_query_database_ddl(self):
-        assert score_severity("query_database", {"query": "DROP TABLE users"}, CONFIG) == 90
+        assert score_severity("query_database", {"query": "DROP TABLE users"}, CONFIG)[0] == 90
 
     def test_query_database_dml(self):
-        assert score_severity("query_database", {"query": "UPDATE users SET name='x'"}, CONFIG) == 40
+        assert score_severity("query_database", {"query": "UPDATE users SET name='x'"}, CONFIG)[0] == 40
 
     def test_unknown_tool_defaults(self):
-        assert score_severity("unknown_tool", {}, CONFIG) == 50
+        assert score_severity("unknown_tool", {}, CONFIG)[0] == 50
 
 
 class TestPolicy:
     def test_no_policy_violation_low_amount(self):
-        assert score_policy("send_payment", {"amount": 100}, CONFIG) == 0
+        assert score_policy("send_payment", {"amount": 100}, CONFIG)[0] == 0
 
     def test_policy_violation_high_amount(self):
-        assert score_policy("send_payment", {"amount": 10000}, CONFIG) == 100
+        assert score_policy("send_payment", {"amount": 10000}, CONFIG)[0] == 100
 
     def test_no_policy_rules(self):
-        assert score_policy("delete_file", {"file_path": "/tmp/test.txt"}, CONFIG) == 0
+        assert score_policy("delete_file", {"file_path": "/tmp/test.txt"}, CONFIG)[0] == 0
 
     def test_destructive_query_policy(self):
-        assert score_policy("query_database", {"query": "DROP TABLE users"}, CONFIG) == 100
+        assert score_policy("query_database", {"query": "DROP TABLE users"}, CONFIG)[0] == 100
 
     def test_safe_query_no_policy(self):
-        assert score_policy("query_database", {"query": "SELECT * FROM users"}, CONFIG) == 0
+        assert score_policy("query_database", {"query": "SELECT * FROM users"}, CONFIG)[0] == 0
+
+    def test_policy_reason_recorded(self):
+        score, reason = score_policy("send_payment", {"amount": 10000}, CONFIG)
+        assert score == 100
+        assert reason and "limit" in reason.lower()
 
 
 class TestAnomaly:
@@ -89,38 +99,43 @@ class TestAnomaly:
 
 class TestDataSensitivity:
     def test_internal_recipient(self):
-        assert score_data_sensitivity("send_payment", {"recipient": "alice"}, CONFIG) == 0
+        assert score_data_sensitivity("send_payment", {"recipient": "alice"}, CONFIG)[0] == 0
 
     def test_external_recipient(self):
-        assert score_data_sensitivity("send_payment", {"recipient": "external_vendor"}, CONFIG) == 40
+        assert score_data_sensitivity("send_payment", {"recipient": "external_vendor"}, CONFIG)[0] == 40
 
     def test_path_with_customer(self):
-        assert score_data_sensitivity("delete_file", {"file_path": "/data/customers.xlsx"}, CONFIG) == 80
+        assert score_data_sensitivity("delete_file", {"file_path": "/data/customers.xlsx"}, CONFIG)[0] == 80
 
     def test_destructive_query(self):
-        assert score_data_sensitivity("query_database", {"query": "DROP TABLE users"}, CONFIG) >= 70
+        assert score_data_sensitivity("query_database", {"query": "DROP TABLE users"}, CONFIG)[0] >= 70
 
     def test_safe_query(self):
-        assert score_data_sensitivity("query_database", {"query": "SELECT count(*) FROM products"}, CONFIG) == 10
+        assert score_data_sensitivity("query_database", {"query": "SELECT count(*) FROM products"}, CONFIG)[0] == 10
+
+    def test_sensitive_reason_recorded(self):
+        score, reason = score_data_sensitivity("delete_file", {"file_path": "/data/customers.xlsx"}, CONFIG)
+        assert score == 80
+        assert reason and "customer" in reason
 
 
 class TestConfidence:
     def test_no_history(self):
-        assert score_confidence("send_payment", {}, CONFIG) == 50
+        assert score_confidence("send_payment", {}, CONFIG)[0] == 50
 
     def test_low_history(self):
-        assert score_confidence("send_payment", {}, CONFIG, [{"action_type": "send_payment"}]) == 50
+        assert score_confidence("send_payment", {}, CONFIG, [{"action_type": "send_payment"}])[0] == 50
 
     def test_history_but_not_for_this_action(self):
-        assert score_confidence("send_payment", {}, CONFIG, [{"action_type": "delete_file"}]) == 30
+        assert score_confidence("send_payment", {}, CONFIG, [{"action_type": "delete_file"}])[0] == 30
 
     def test_medium_history(self):
         history = [{"action_type": "send_payment"} for _ in range(5)]
-        assert score_confidence("send_payment", {}, CONFIG, history) == 70
+        assert score_confidence("send_payment", {}, CONFIG, history)[0] == 70
 
     def test_high_history(self):
         history = [{"action_type": "send_payment"} for _ in range(10)]
-        assert score_confidence("send_payment", {}, CONFIG, history) == 90
+        assert score_confidence("send_payment", {}, CONFIG, history)[0] == 90
 
 
 class TestToolTrust:

@@ -26,6 +26,9 @@ export function Composer({
   return (
     <section className="composer" aria-label="Intercept a tool call">
       <h2 className="composer-title">Intercept tool call</h2>
+      <p className="composer-intro">
+        syn scores this action against six risk factors and writes the decision to the audit trail.
+      </p>
 
       <div className="seg" role="group" aria-label="Runtime mode">
         <button

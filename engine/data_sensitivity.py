@@ -1,13 +1,14 @@
 import re
 
 
-def score_data_sensitivity(action_type: str, parameters: dict, config: dict) -> float:
+def score_data_sensitivity(action_type: str, parameters: dict, config: dict) -> tuple[float, str]:
     tool_config = config.get("tools", {}).get(action_type)
     if not tool_config:
-        return 30.0
+        return 30.0, "No data-sensitivity profile is registered for this tool."
 
     rules = tool_config.get("data_sensitivity_rules", [])
     max_score = 0.0
+    matched_fields = []
 
     for rule in rules:
         field = rule.get("field")
@@ -18,6 +19,11 @@ def score_data_sensitivity(action_type: str, parameters: dict, config: dict) -> 
             continue
 
         if re.search(pattern, param_value, re.IGNORECASE):
-            max_score = max(max_score, float(rule["score"]))
+            score = float(rule["score"])
+            max_score = max(max_score, score)
+            matched_fields.append(f"{field}='{param_value}' (pattern '{pattern}')")
 
-    return max_score
+    if max_score == 0.0:
+        return 0.0, "No sensitive-data fields (PII or regulated data) detected in the request."
+
+    return max_score, "Sensitive data matched: " + "; ".join(matched_fields) + "."

@@ -7,6 +7,7 @@ interface TimelineEntry {
   agent_id: string;
   created_at: string;
   trigger?: string;
+  reason?: string;
   entry?: Record<string, unknown>;
 }
 
@@ -51,9 +52,15 @@ export function Timeline({ refreshKey = 0 }: { refreshKey?: number }) {
   const visible = entries.filter(e => filter === 'all' || e.decision === filter);
 
   return (
-    <aside className="panel">
-      <div className="panel-head">
-        <span className="panel-title">Audit Timeline</span>
+    <section className="timeline-panel" aria-label="Audit trail">
+      <header className="panel-head">
+        <div className="panel-title-row">
+          <span className="panel-title">Audit trail</span>
+          <span className="panel-meta">
+            <span className="panel-live"><span className="live-dot" />live</span>
+            <span className="mono">{entries.length}</span>
+          </span>
+        </div>
         <div className="panel-filters">
           {FILTERS.map(f => (
             <button
@@ -65,7 +72,7 @@ export function Timeline({ refreshKey = 0 }: { refreshKey?: number }) {
             </button>
           ))}
         </div>
-      </div>
+      </header>
       <div className="panel-body">
         {loading ? (
           <div className="skeleton">Loading audit history…</div>
@@ -77,19 +84,22 @@ export function Timeline({ refreshKey = 0 }: { refreshKey?: number }) {
               <div className="timeline-item" key={`${e.created_at}-${i}`}>
                 <span className={`timeline-node is-${e.decision}`} />
                 <div className="timeline-card">
-                  <div className="tl-action">{e.action_type}</div>
-                  <div className="tl-meta">
+                  <div className="tl-top">
+                    <span className="tl-action">{e.action_type}</span>
                     <span className={`tl-badge is-${e.decision}`}>{e.decision}</span>
+                  </div>
+                  <div className="tl-meta">
                     <span>{formatTime(e.created_at)}</span>
                     <span title={e.agent_id}>agent {shortId(e.agent_id)}</span>
                   </div>
                   {e.trigger && <div className="tl-trigger">{e.trigger}</div>}
+                  {e.reason && <div className="tl-reason">{e.reason}</div>}
                 </div>
               </div>
             ))}
           </div>
         )}
       </div>
-    </aside>
+    </section>
   );
 }

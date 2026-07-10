@@ -45,6 +45,12 @@
   --accent-bg: rgba(43, 185, 176, 0.1);
   --accent-border: rgba(43, 185, 176, 0.28);
 
+  /* Depth (used only for state, never as decorative glow) */
+  --shadow-state: 0 2px 10px rgba(0, 0, 0, 0.45);
+
+  /* Faint flat texture behind floating cards */
+  --texture: radial-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+
   /* Radii */
   --radius: 14px;
   --radius-md: 10px;

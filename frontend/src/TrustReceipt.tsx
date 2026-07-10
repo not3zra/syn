@@ -1,9 +1,9 @@
-import { useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import type { DecisionResponse } from './types';
 import { RiskGauge } from './RiskGauge';
 import { FactorBreakdown } from './FactorBreakdown';
 import { ExpiryTimer } from './ExpiryTimer';
-import { SynMark } from './SynMark';
+import { DecisionGlyph } from './icons';
 
 function formatTimestamp(ts: string): string {
   const d = new Date(ts);
@@ -43,40 +43,38 @@ function parseTrigger(trigger: string): string {
   return trigger;
 }
 
-const ICONS: Record<string, string> = { approved: '✓', escalated: '!', blocked: '✕' };
-
 interface TrustReceiptProps {
   data: DecisionResponse;
 }
 
 export function TrustReceipt({ data }: TrustReceiptProps) {
+  const [showDetails, setShowDetails] = useState(false);
   const overallRisk = useMemo(() => computeOverallRisk(data.factor_scores), [data.factor_scores]);
   const isEscalated = data.decision === 'escalated';
   const auditRef = `syn-${new Date(data.timestamp).getTime().toString(36)}`;
+  const hasDetails = Boolean(data.explanation || data.remediation || isEscalated);
 
   return (
-    <div className="receipt">
-      <div className="receipt-head">
-        <div className="receipt-brand">
-          <span className="mark"><SynMark size={18} /></span>
-          <span className="title">syn</span>
-        </div>
+    <article className="receipt">
+      <header className="receipt-head">
         <span className="receipt-tag">Trust Receipt</span>
-      </div>
+        <span className="receipt-ref mono">{auditRef}</span>
+      </header>
 
-      <div className={`decision-banner is-${data.decision}`}>
-        <span className="icon">{ICONS[data.decision] ?? '·'}</span>
-        <span>{data.decision}</span>
-      </div>
-
-      {data.simulation && (
-        <div className="banner-sim">
-          <SynMark size={13} /> Simulation · no side effects
+      <div className={`decision-hero is-${data.decision}`}>
+        <span className="decision-glyph"><DecisionGlyph decision={data.decision} /></span>
+        <div className="decision-text">
+          <span className="decision-label">Decision</span>
+          <span className="decision-word">{data.decision}</span>
         </div>
-      )}
+        {data.simulation && <span className="decision-sim">Simulation</span>}
+      </div>
 
       <div className="receipt-body">
-        <div className="receipt-section">
+        {data.reason && (
+          <p className="reason-block" role="note">{data.reason}</p>
+        )}
+        <div className="kv-grid">
           <div className="kv">
             <span className="kv-key">Action</span>
             <span className="kv-val mono">{data.action_type}</span>
@@ -98,54 +96,58 @@ export function TrustReceipt({ data }: TrustReceiptProps) {
           )}
         </div>
 
-        <div className="receipt-section">
-          <div className="gauges">
-            <RiskGauge score={overallRisk} label="Action risk" size="lg" />
-            <RiskGauge
-              score={Math.min(data.session_data.cumulative_severity, 100)}
-              label="Session risk"
-              size="lg"
-            />
-          </div>
+        <div className="gauges">
+          <RiskGauge score={overallRisk} label="Action risk" size="lg" />
+          <RiskGauge
+            score={Math.min(data.session_data.cumulative_severity, 100)}
+            label="Session risk"
+            size="lg"
+          />
         </div>
 
-        <div className="receipt-section">
-          <FactorBreakdown scores={data.factor_scores} />
-        </div>
+        <FactorBreakdown scores={data.factor_scores} />
 
-        {data.explanation && (
-          <div className="receipt-section">
-            <h3 className="section-title">Explanation</h3>
-            <p className="text-block">{data.explanation}</p>
-          </div>
-        )}
-
-        {data.remediation && (
-          <div className="receipt-section">
-            <h3 className="section-title">Remediation</h3>
-            <p className="text-block muted">{data.remediation}</p>
-          </div>
-        )}
-
-        {isEscalated && (
-          <div className="receipt-section">
-            <h3 className="section-title">Rollback plan</h3>
-            <p className="text-block muted">{data.rollback_plan || 'Pending human review.'}</p>
-            {data.expires_at && <ExpiryTimer expiresAt={data.expires_at} />}
+        {hasDetails && (
+          <div className="disclosure">
+            <button
+              className="disclosure-toggle"
+              onClick={() => setShowDetails(s => !s)}
+              aria-expanded={showDetails}
+            >
+              {showDetails ? 'Hide details' : 'Show details'}
+              <span className={`caret${showDetails ? ' open' : ''}`} aria-hidden="true">▾</span>
+            </button>
+            {showDetails && (
+              <div className="disclosure-body">
+                {data.explanation && (
+                  <section className="receipt-section">
+                    <h3 className="section-title">Explanation</h3>
+                    <p className="text-block">{data.explanation}</p>
+                  </section>
+                )}
+                {data.remediation && (
+                  <section className="receipt-section">
+                    <h3 className="section-title">Remediation</h3>
+                    <p className="text-block muted">{data.remediation}</p>
+                  </section>
+                )}
+                {isEscalated && (
+                  <section className="receipt-section">
+                    <h3 className="section-title">Rollback plan</h3>
+                    <p className="text-block muted">{data.rollback_plan || 'Pending human review.'}</p>
+                    {data.expires_at && <ExpiryTimer expiresAt={data.expires_at} />}
+                  </section>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>
 
-      <div className="receipt-foot">
-        <div className="foot-row">
-          <span className="foot-key">Timestamp</span>
-          <span className="foot-val">{formatTimestamp(data.timestamp)}</span>
-        </div>
-        <div className="foot-row">
-          <span className="foot-key">Audit ref</span>
-          <span className="foot-val">{auditRef}</span>
-        </div>
-      </div>
-    </div>
+      <footer className="receipt-foot">
+        <span className="foot-key">Timestamp</span>
+        <span className="foot-val">{formatTimestamp(data.timestamp)}</span>
+      </footer>
+    </article>
   );
 }

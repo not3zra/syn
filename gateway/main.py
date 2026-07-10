@@ -323,6 +323,7 @@ class ToolCallRequest(BaseModel):
 class DecisionResponse(BaseModel):
     decision: str
     trigger: str
+    reason: str | None = None
     factor_scores: dict
     session_data: dict
     request_id: str | None = None
@@ -650,6 +651,7 @@ async def intercept(
         resp = DecisionResponse(
             decision="blocked",
             trigger=trigger,
+            reason="Tool is not registered in the policy; unknown tools are blocked by default.",
             factor_scores={
                 "severity": 0,
                 "policy": 100,
@@ -718,6 +720,7 @@ async def intercept(
         action_type=req.action_type,
         decision=result.decision.value,
         trigger=final_trigger,
+        reason=result.reason,
         factor_scores=result.factor_scores.to_dict(),
         top_factor=top_factor,
     )
@@ -727,6 +730,7 @@ async def intercept(
     resp = DecisionResponse(
         decision=result.decision.value,
         trigger=final_trigger,
+        reason=result.reason,
         factor_scores=result.factor_scores.to_dict(),
         session_data=result.session_data.to_dict(),
         regulatory_tier=result.regulatory_tier,

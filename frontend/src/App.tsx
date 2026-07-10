@@ -4,7 +4,8 @@ import { Composer } from './Composer';
 import { TrustReceipt } from './TrustReceipt';
 import { BootstrapReview } from './BootstrapReview';
 import { Timeline } from './Timeline';
-import { SynMark } from './SynMark';
+import { BrandMark } from './BrandMark';
+import { ResetGlyph } from './icons';
 import { API_BASE, apiFetch } from './api';
 import './App.css';
 
@@ -16,25 +17,21 @@ const PRESET_TOOLS: Record<string, Record<string, string>> = {
   query_database: { query: 'SELECT * FROM users' },
 };
 
-function ConsoleIcon() {
+function EmptyState() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="4" width="18" height="16" rx="2" />
-      <path d="M7 9l3 3-3 3M13 15h4" />
-    </svg>
-  );
-}
-
-function BootstrapIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <line x1="4" y1="7" x2="20" y2="7" />
-      <line x1="4" y1="12" x2="20" y2="12" />
-      <line x1="4" y1="17" x2="20" y2="17" />
-      <circle cx="9" cy="7" r="2" fill="var(--surface)" />
-      <circle cx="15" cy="12" r="2" fill="var(--surface)" />
-      <circle cx="8" cy="17" r="2" fill="var(--surface)" />
-    </svg>
+    <div className="empty">
+      <div className="empty-glyph"><BrandMark size={34} /></div>
+      <h2>Intercept a tool call</h2>
+      <p>
+        Pick a tool and its parameters on the left, then intercept. syn scores the action,
+        shows the exact trigger it fired on, and writes the decision to the audit trail.
+      </p>
+      <ul className="empty-points">
+        <li>Approved, escalated, or blocked in a single pass</li>
+        <li>Six deterministic risk factors, no black box</li>
+        <li>Session patterns correlated across the agent</li>
+      </ul>
+    </div>
   );
 }
 
@@ -47,7 +44,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [tools, setTools] = useState<ToolInfo[]>([]);
   const [simulationMode, setSimulationMode] = useState(false);
-  const [resetNonce, setResetNonce] = useState(0);
+  const [refreshNonce, setRefreshNonce] = useState(0);
 
   useEffect(() => {
     fetch(`${API_BASE}/tools`)
@@ -95,6 +92,7 @@ export default function App() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: DecisionResponse = await res.json();
       setDecision(data);
+      setRefreshNonce(n => n + 1);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Request failed');
     } finally {
@@ -108,82 +106,72 @@ export default function App() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setDecision(null);
       setError(null);
-      setResetNonce(n => n + 1);
+      setRefreshNonce(n => n + 1);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Reset failed');
     }
   }, []);
 
   return (
-    <div className="app">
+    <div className={`app${view === 'bootstrap' ? ' app--bootstrap' : ''}`}>
       <header className="topbar">
-        <div className="topbar-brand">
-          <SynMark size={20} />
-          <span className="wordmark">syn</span>
-          <span className="wordmark-sub">governance</span>
-        </div>
+        <BrandMark size={26} />
+        <span className="wordmark-sub">governance</span>
+        <nav className="console-nav" aria-label="Views">
+          <button
+            className={`nav-link${view === 'console' ? ' active' : ''}`}
+            onClick={() => setView('console')}
+          >
+            Console
+          </button>
+          <button
+            className={`nav-link${view === 'bootstrap' ? ' active' : ''}`}
+            onClick={() => setView('bootstrap')}
+          >
+            Bootstrap
+          </button>
+        </nav>
         <div className="topbar-spacer" />
         <div className="topbar-status">
           <span className="dot" />
           <span>demo</span>
           <span className="mono">agent {AGENT_ID.slice(0, 8)}</span>
         </div>
-        <button className="btn btn-ghost btn-sm" onClick={handleReset}>Reset demo</button>
+        <button className="btn btn-ghost btn-sm" onClick={handleReset}>
+          <ResetGlyph /> Reset demo
+        </button>
       </header>
 
-      <nav className="rail" aria-label="Primary">
-        <div className="rail-logo"><SynMark size={22} /></div>
-        <div className="rail-nav">
-          <button
-            className={`rail-item${view === 'console' ? ' active' : ''}`}
-            onClick={() => setView('console')}
-          >
-            <ConsoleIcon />
-            Console
-          </button>
-          <button
-            className={`rail-item${view === 'bootstrap' ? ' active' : ''}`}
-            onClick={() => setView('bootstrap')}
-          >
-            <BootstrapIcon />
-            Bootstrap
-          </button>
-        </div>
-      </nav>
-
-      <main className="stage">
-        <div className="stage-inner">
-          {view === 'console' ? (
-            <>
-              <Composer
-                tools={tools}
-                actionType={actionType}
-                parameters={parameters}
-                simulationMode={simulationMode}
-                loading={loading}
-                onToolChange={handleToolChange}
-                onParamsChange={setParameters}
-                onModeChange={setSimulationMode}
-                onSubmit={handleSubmit}
-              />
+      {view === 'console' ? (
+        <>
+          <aside className="composer-pane">
+            <Composer
+              tools={tools}
+              actionType={actionType}
+              parameters={parameters}
+              simulationMode={simulationMode}
+              loading={loading}
+              onToolChange={handleToolChange}
+              onParamsChange={setParameters}
+              onModeChange={setSimulationMode}
+              onSubmit={handleSubmit}
+            />
+          </aside>
+          <main className="output">
+            <div className="output-main">
               {error && <div className="error-msg">{error}</div>}
-              {decision ? (
-                <TrustReceipt data={decision} />
-              ) : (
-                <div className="empty">
-                  <div className="empty-mark"><SynMark size={40} /></div>
-                  <h2>Govern a tool call</h2>
-                  <p>Pick a tool and parameters, then intercept to see the decision, its exact trigger, and the full audit trail.</p>
-                </div>
-              )}
-            </>
-          ) : (
+              {decision ? <TrustReceipt data={decision} /> : <EmptyState />}
+            </div>
+            <Timeline refreshKey={refreshNonce} />
+          </main>
+        </>
+      ) : (
+        <main className="output output--full">
+          <div className="output-inner">
             <BootstrapReview />
-          )}
-        </div>
-      </main>
-
-      <Timeline refreshKey={resetNonce} />
+          </div>
+        </main>
+      )}
     </div>
   );
 }

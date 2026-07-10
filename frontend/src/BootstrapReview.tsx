@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import { apiFetch } from './api';
-import { SynMark } from './SynMark';
+import { BrandMark } from './BrandMark';
 
 interface ToolRule {
   tool_name: string;
@@ -244,8 +244,7 @@ export function BootstrapReview() {
     <div className="receipt" style={{ maxWidth: '720px' }}>
       <div className="receipt-head">
         <div className="receipt-brand">
-          <span className="mark"><SynMark size={18} /></span>
-          <span className="title">syn</span>
+          <BrandMark size={18} />
         </div>
         <span className="receipt-tag">Bootstrap Review</span>
       </div>

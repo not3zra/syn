@@ -122,7 +122,7 @@ A restrained dark palette: near-black neutrals carry the surface, one teal accen
 
 ## 4. Elevation
 
-This system is flat by default. Depth is conveyed by tonal layering (Abyss → Surface → Card → Raised) and a single hairline border, not by drop shadows. Shadows appear only as a subtle, low-blur response to state (focus, active panel), never as wide decorative glows.
+This system is flat by default. Depth is conveyed by tonal layering (Abyss → Surface → Card → Raised), a faint flat dot-grid texture behind floating cards (1px dots at ~3.5% white, never a gradient wash or glow), and a single hairline border, not by drop shadows. Shadows appear only as a subtle, low-blur response to state (focus, active panel), never as wide decorative glows.
 
 ### Shadow Vocabulary
 - **Focus** (`0 0 0 2px rgba(43,185,176,0.5)`): teal focus ring on keyboard-focused controls. No offset blur, no ghost-card combo.
@@ -156,11 +156,11 @@ This system is flat by default. Depth is conveyed by tonal layering (Abyss → S
 - **Error / Disabled:** blocked-red border at 20% alpha for error; 50% opacity for disabled.
 
 ### Navigation
-- **Style:** a slim left identity rail (logo + wordmark + live demo status) and a top bar carrying the primary action. No full nav menu; the console has one job.
-- **Active state:** teal text or a 2px teal left marker on the active rail item. No wide tracking, no all-caps eyebrows.
+- **Style:** a top bar carries the brand placeholder, the `Console / Bootstrap` view switch (segmented, teal active state), the live demo status, and the primary Reset action. No full nav menu; the console has one job.
+- **Active state:** teal text on a tinted pill for the active view. No wide tracking, no all-caps eyebrows.
 
 ### Signature Component: Trust Receipt
-The hero. A centered card showing the decision badge (color + weight, not just a border tint), the six-factor breakdown, the exact deterministic trigger string in mono, regulatory-tier badges, the AI explanation, an audit hash, and a timestamp. It must read as a "receipt" for a governed action: precise, complete, calm.
+The hero. A left-aligned decision band (color + weight + glyph, not just a border tint) carries the verdict; action and session risk gauges and the six-factor breakdown stay visible by default, while the longer explanation, remediation, and rollback text sit behind a "Show details" disclosure so the default receipt stays short and scannable. The exact deterministic trigger string renders in mono, regulatory-tier badges as neutral slate outlines, and an audit hash plus timestamp close it out. It must read as a "receipt" for a governed action: precise, complete, calm.
 
 ## 6. Do's and Don'ts
 

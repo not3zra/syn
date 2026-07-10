@@ -16,6 +16,7 @@ export interface SessionData {
 export interface DecisionResponse {
   decision: 'approved' | 'escalated' | 'blocked';
   trigger: string;
+  reason?: string | null;
   factor_scores: FactorScores;
   session_data: SessionData;
   regulatory_tier: string;
