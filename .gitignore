@@ -37,6 +37,15 @@ handoff.md
 Thumbs.db
 Desktop.ini
 
+# Unused default assets
+frontend/src/assets/
+
+# Vite boilerplate readme
+frontend/README.md
+
+# Presentation material (not code)
+docs/slide-deck.md
+
 # Logs
 *.log
 
