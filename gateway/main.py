@@ -1,4 +1,5 @@
 import asyncio
+import hmac
 import json
 import logging
 import os
@@ -6,6 +7,7 @@ import time
 import uuid
 from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -13,7 +15,7 @@ from typing import Any
 
 import yaml
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -120,7 +122,68 @@ AUDIT_STORE = AuditStore(str(audit_db_path))
 SLACK_WEBHOOK_URL = os.environ.get("SYN_SLACK_WEBHOOK_URL")
 SLACK_NOTIFIER = SlackNotifier(webhook_url=SLACK_WEBHOOK_URL)
 
-app = FastAPI(title="syn-gateway")
+# ---------------------------------------------------------------------------
+# Demo-token tripwire (NOT real auth).
+#
+# This gate exists purely as an anti-footgun for the public demo: it stops a
+# casual visitor from mutating the shared demo state (approving tools,
+# resolving escalations, etc.) without the baked-in token. The token is
+# inlined into the public client bundle (see frontend wiring, #36) and is
+# therefore fully extractable by anyone who opens DevTools. Do NOT treat this
+# as authentication or authorization. Real auth is tracked separately (#19).
+#
+# When DEMO_TOKEN is unset the check is a no-op, so local dev, curl,
+# test_workflow.sh, and the pytest suite keep working unchanged.
+# ---------------------------------------------------------------------------
+
+_DEMO_TOKEN_ENV = "DEMO_TOKEN"
+_FLY_APP_NAME_ENV = "FLY_APP_NAME"
+_DEMO_TOKEN_HEADER = "X-Demo-Token"
+
+
+def _expected_demo_token() -> str | None:
+    token = os.environ.get(_DEMO_TOKEN_ENV)
+    return token if token else None
+
+
+def require_demo_token(request: Request) -> None:
+    """FastAPI dependency that gates a mutating endpoint behind X-Demo-Token.
+
+    No-op when DEMO_TOKEN is unset. Reused by the admin reset endpoint (#35).
+    """
+    expected = _expected_demo_token()
+    if expected is None:
+        return
+    provided = request.headers.get(_DEMO_TOKEN_HEADER)
+    if not provided or not hmac.compare_digest(provided, expected):
+        raise HTTPException(
+            status_code=401,
+            detail="Missing or invalid X-Demo-Token",
+            headers={"WWW-Authenticate": _DEMO_TOKEN_HEADER},
+        )
+
+
+def assert_demo_token_configured_for_production() -> None:
+    """Fail loud in production when the tripwire token is missing.
+
+    On Fly (FLY_APP_NAME set) shipping without DEMO_TOKEN means the demo is
+    open to anyone — refuse to start rather than deploy insecurely.
+    """
+    if os.environ.get(_FLY_APP_NAME_ENV) and _expected_demo_token() is None:
+        raise RuntimeError(
+            "DEMO_TOKEN must be set when running on Fly (FLY_APP_NAME is set). "
+            "Refusing to start: the demo-token tripwire would be a no-op and the "
+            "public demo would be unprotected."
+        )
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    assert_demo_token_configured_for_production()
+    yield
+
+
+app = FastAPI(title="syn-gateway", lifespan=_lifespan)
 
 _THREAD_POOL = ThreadPoolExecutor(max_workers=4)
 
@@ -351,7 +414,7 @@ def list_tools():
     ]
 
 
-@ app.post("/bootstrap/introspect")
+@ app.post("/bootstrap/introspect", dependencies=[Depends(require_demo_token)])
 def bootstrap_introspect(req: BootstrapIntrospectRequest):
     try:
         schemas = req.manual_schemas if req.manual_schemas is not None else introspect_tools(api_base=req.api_base)
@@ -369,7 +432,7 @@ def bootstrap_introspect(req: BootstrapIntrospectRequest):
         return {"error": str(e)}
 
 
-@app.post("/bootstrap/approve")
+@app.post("/bootstrap/approve", dependencies=[Depends(require_demo_token)])
 def bootstrap_approve(req: BootstrapApproveRequest):
     errors = validate_generated_yaml(req.yaml_content)
     if errors:
@@ -388,7 +451,7 @@ class ApproveToolRequest(BaseModel):
     reviewed_by: str = "demo-admin"
 
 
-@app.post("/bootstrap/approve/{tool_name}")
+@app.post("/bootstrap/approve/{tool_name}", dependencies=[Depends(require_demo_token)])
 def bootstrap_approve_tool(tool_name: str, req: ApproveToolRequest):
     rule = AUDIT_STORE.get_pending_rule_by_tool(tool_name)
     if not rule or rule["status"] != "pending":
@@ -417,7 +480,7 @@ def bootstrap_approve_tool(tool_name: str, req: ApproveToolRequest):
     return {"success": True, "tool_name": tool_name}
 
 
-@app.post("/bootstrap/reject/{tool_name}")
+@app.post("/bootstrap/reject/{tool_name}", dependencies=[Depends(require_demo_token)])
 def bootstrap_reject_tool(tool_name: str, req: ApproveToolRequest):
     rule = AUDIT_STORE.get_pending_rule_by_tool(tool_name)
     if not rule or rule["status"] != "pending":
@@ -433,7 +496,7 @@ def bootstrap_reject_tool(tool_name: str, req: ApproveToolRequest):
     return {"success": True, "tool_name": tool_name}
 
 
-@app.post("/bootstrap/approve-all")
+@app.post("/bootstrap/approve-all", dependencies=[Depends(require_demo_token)])
 def bootstrap_approve_all(req: ApproveToolRequest):
     pending = AUDIT_STORE.list_pending_rules()
     if not pending:
@@ -470,7 +533,7 @@ class RetryRequest(BaseModel):
     parameters: dict = {}
 
 
-@app.post("/bootstrap/retry/{rule_id}")
+@app.post("/bootstrap/retry/{rule_id}", dependencies=[Depends(require_demo_token)])
 def bootstrap_retry(rule_id: int, req: RetryRequest):
     rows = AUDIT_STORE._conn.execute(
         "SELECT * FROM pending_rules WHERE id = ?", (rule_id,)
@@ -504,7 +567,7 @@ class ResolveRequest(BaseModel):
     outcome: str  # "approved" or "denied"
 
 
-@app.post("/resolve/{entry_id}")
+@app.post("/resolve/{entry_id}", dependencies=[Depends(require_demo_token)])
 def resolve_escalation(entry_id: int, req: ResolveRequest):
     AUDIT_STORE.mark_resolved(entry_id)
     result = {"success": True, "execution": None}
@@ -527,7 +590,7 @@ def list_timeline(outcome: str | None = Query(None)):
     return AUDIT_STORE.list_all(outcome=outcome)
 
 
-@app.post("/intercept")
+@app.post("/intercept", dependencies=[Depends(require_demo_token)])
 async def intercept(
     req: ToolCallRequest,
     request: Request,
