@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+.ruff_cache/
 node_modules/
 frontend/dist/
 data/
@@ -12,3 +13,17 @@ AGENTS.md
 docs/agents/
 docs/ai-action-firewall-project-spec.md
 docs/amd-hackathon-plan-final-revised.md
+
+# Agent / IDE artifacts
+.impeccable/
+handoff.md
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+
+# Logs
+*.log
