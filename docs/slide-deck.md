@@ -102,8 +102,8 @@ AI Agent ──▶ syn Gateway ──▶ Tool
 ### Decision Priority
 
 ```
-Session branches (pattern match / cumulative threshold)
-  → Decision tree floors (severity / policy / data_sensitivity / confidence)
+Decision tree floors (severity / policy / data_sensitivity / confidence)
+  → Session branches (pattern match / cumulative threshold)
     → Weighted score (severity: 0.30, policy: 0.20, tool_trust: 0.20,
                        data_sensitivity: 0.15, anomaly: 0.10, confidence: 0.05)
 ```
@@ -438,7 +438,7 @@ syn/
 │   ├── bootstrap.py   # AI auto-config
 │   ├── slack.py       # Notifications
 │   └── *.yaml          # Config files
-├── frontend/          # React + Vite + TypeScript
+├── frontend/          # React + Vite + TypeScript + nginx proxy
 ├── tests/             # 15 test files, 295 tests
 ├── docs/              # PRD, decision log, project ref
 ├── docker-compose.yml

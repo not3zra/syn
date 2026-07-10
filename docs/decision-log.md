@@ -103,3 +103,13 @@ The `data_sensitivity_floor` closes the gap where a *blended* low score masked a
 
 ### What this tells you
 Round 8 closes the bootstrap UX gap from a functional-but-rough interface to a proper review workflow. The original bootstrap page was a single textarea with LLM output — now it has two tabs, rule card summaries, diff views, generating/pending/error statuses, inline editing, and reliable LLM timeouts. The remaining gaps (side-by-side diff, SSE push, approve-with-edited-yaml, config runtime-override from #30) are production polish, not demo-blockers.
+
+## Round 9 — Decision order and YAML renderer fixes (July 2026)
+
+| # | Decision | Hackathon choice | Ideal (unconstrained) | Why it matters |
+|---|---|---|---|---|
+| 39 | Decision-tree floor ordering | Floor checks (policy, severity, confidence, data_sensitivity) run **before** session branches. Previously `apply_session_branches` ran first, so a `policy=100` violation was downgraded from `BLOCKED` to `ESCALATED` when a session pattern matched — the `ESCALATED` session branch returned before the `BLOCKED` policy floor was reached. Fixed by reordering `engine/evaluate.py` so floors are the first gate. | Formal pipeline with explicit priority levels and skip-chains | The bug let high-confidence policy violations (e.g., `delete_file *` with `policy=100`) slip through as mere escalations whenever a session pattern also matched. The fix restores the invariant: policy floors are absolute gates that cannot be overridden by session context. |
+| 40 | Custom YAML list renderer | Extracted `_render_yaml_list()` in `engine/bootstrap.py` to handle mixed-type lists (dicts + scalars), nested lists, and `None` values. PyYAML's default `SafeDumper` produced `None:` as dictionary keys for `null` items and silently dropped list entries. | A formally-defined YAML schema with tagged unions | `None:` as a YAML key is syntactically invalid and silently corrupts the config file. Dropping null items changes the bootstrap behavior silently. The custom renderer was the minimal fix — a schema-tagged approach would be over-engineering for a single render function. |
+
+### What this tells you
+Round 9 catches two bugs that live verification revealed after the initial "done" claim. The floor-ordering bug was logical — policy violations were being silently downgraded. The YAML renderer bug was structural — bootstrap config files would fail to parse. Both were caught by the same pattern: build → claim done → manually verify live → bug found → fix → re-verify. The decision log entry formalizes why each choice is correct going forward.

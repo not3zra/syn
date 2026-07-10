@@ -71,7 +71,7 @@ syn/
 │
 ├── gateway/
 │   ├── __init__.py
-│   ├── main.py              # FastAPI app (health, intercept, bootstrap, resolve, timeline)
+│   ├── main.py              # FastAPI app (health, /health/llm, intercept, bootstrap, resolve, timeline)
 │   └── Dockerfile           # Python 3.12-slim
 │
 ├── engine/
@@ -103,6 +103,7 @@ syn/
 │   ├── package.json
 │   ├── vite.config.ts
 │   ├── Dockerfile           # Multi-stage: node build → nginx serve
+│   ├── nginx.conf          # Nginx config: serves static build, proxies `/intercept`, `/tools`, `/health`, `/bootstrap`, `/resolve`, `/admin`, `/timeline` to `gateway:8000`
 │   ├── src/
 │   │   ├── main.tsx
 │   │   ├── App.tsx           # Main app (Intercept mode + Bootstrap mode)
@@ -252,7 +253,7 @@ npm install
 npm run dev
 ```
 
-Vite dev server on `http://localhost:5173` (proxies `/intercept`, `/tools`, `/health` to port 8000).
+Vite dev server on `http://localhost:5173` (proxies `/intercept`, `/tools`, `/health`, `/bootstrap`, `/resolve`, `/admin`, `/timeline` to port 8000). In Docker, `nginx.conf` provides equivalent proxy rules for the production build.
 
 ### Run Tests
 
@@ -267,7 +268,11 @@ pytest tests/ -v
 
 ### `GET /health`
 
-Health check. Returns `{"status": "ok"}`.
+Health check. Returns `{"status": "ok"}` with cached LLM status.
+
+### `GET /health/llm`
+
+Forces a fresh LLM probe. Returns live `LLMStatus` including `healthy`, `latency_ms`, and `provider`. Gateway status stays `"ok"` even when LLM is unreachable — the deterministic engine works without an LLM.
 
 ### `GET /tools`
 
@@ -412,7 +417,7 @@ List audit log entries. Optional `?outcome=approved|escalated|blocked` filter.
 
 ### Decision Tree (Hard Floors)
 
-Applied before weighted scoring — these override everything:
+Applied **before session branches** — floors are checked first so policy violations cannot be downgraded by session context:
 
 | Condition | Decision |
 |-----------|----------|
@@ -443,8 +448,8 @@ Weights: `severity: 0.30, policy: 0.20, tool_trust: 0.20, data_sensitivity: 0.15
 ### Decision Priority
 
 ```
-Session branches (pattern match / cumulative threshold)
-  → Decision tree floors (severity / policy / confidence)
+Decision tree floors (severity / policy / confidence / data_sensitivity)
+  → Session branches (pattern match / cumulative threshold)
     → Weighted score
 ```
 
