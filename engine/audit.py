@@ -250,18 +250,27 @@ class AuditStore:
         tool_name: str,
         proposed_yaml: str,
         schemas_json: str,
+        status: str = "pending",
     ) -> int:
         now = datetime.now(timezone.utc).isoformat()
         cursor = self._conn.execute(
-            "INSERT INTO pending_rules (tool_name, proposed_yaml, schemas_json, status, created_at, updated_at) VALUES (?, ?, ?, 'pending', ?, ?)",
-            (tool_name, proposed_yaml, schemas_json, now, now),
+            "INSERT INTO pending_rules (tool_name, proposed_yaml, schemas_json, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (tool_name, proposed_yaml, schemas_json, status, now, now),
         )
         self._conn.commit()
         return cursor.lastrowid
 
+    def update_pending_rule(self, rule_id: int, proposed_yaml: str) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        self._conn.execute(
+            "UPDATE pending_rules SET proposed_yaml = ?, status = 'pending', updated_at = ? WHERE id = ?",
+            (proposed_yaml, now, rule_id),
+        )
+        self._conn.commit()
+
     def list_pending_rules(self) -> list[dict[str, Any]]:
         rows = self._conn.execute(
-            "SELECT * FROM pending_rules WHERE status = 'pending' ORDER BY created_at ASC"
+            "SELECT * FROM pending_rules WHERE status IN ('pending', 'generating') ORDER BY created_at ASC"
         )
         return [dict(r) for r in rows.fetchall()]
 

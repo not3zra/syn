@@ -715,8 +715,17 @@
 }
 .status-pill.is-pending { background: var(--escalated-bg); color: var(--escalated); border: 1px solid var(--escalated-border); }
 .status-pill.is-error { background: var(--blocked-bg); color: var(--blocked); border: 1px solid var(--blocked-border); }
+.status-pill.is-generating { background: var(--accent-bg); color: var(--accent); border: 1px solid var(--accent-border); }
+.tool-card.is-generating { border-color: var(--accent-border); }
+.tool-card.is-generating .tool-card-head { border-bottom-color: var(--accent-border); }
 .tool-meta-row { padding: 8px 12px; font-size: 11px; color: var(--ink-muted); display: flex; gap: 12px; flex-wrap: wrap; border-bottom: 1px solid var(--border); }
 .tool-error { padding: 8px 12px; background: var(--blocked-bg); border-bottom: 1px solid var(--blocked-border); font-size: 11px; color: var(--blocked); line-height: 1.4; }
+.rule-desc-list { padding: 8px 12px; display: flex; flex-direction: column; gap: 8px; }
+.rule-desc-group { display: flex; flex-direction: column; gap: 4px; }
+.rule-desc-label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-muted); }
+.rule-desc-item { display: flex; align-items: baseline; gap: 6px; font-size: 12px; color: var(--ink-secondary); line-height: 1.4; }
+.rule-desc-bullet { color: var(--accent); font-size: 14px; flex-shrink: 0; }
+.rule-desc-score { margin-left: auto; font-family: var(--font-mono); font-size: 10px; color: var(--ink-muted); flex-shrink: 0; }
 .yaml-box {
   padding: 10px 12px;
   background: var(--bg);

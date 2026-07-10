@@ -372,6 +372,7 @@ def _sanitize_bootstrap_path(target_path: str | None, config_path: Path) -> Path
 
 def _background_bootstrap_generate(tool_name: str, parameters: dict):
     """Background task: generate bootstrap rules for an unknown tool and store as pending."""
+    pid = None
     try:
         schema = {
             "name": tool_name,
@@ -379,6 +380,12 @@ def _background_bootstrap_generate(tool_name: str, parameters: dict):
             "parameters": {k: {"type": "string"} for k in parameters},
         }
         schemas = [schema]
+        pid = AUDIT_STORE.create_pending_rule(
+            tool_name=tool_name,
+            proposed_yaml="",
+            schemas_json=json.dumps(schemas),
+            status="generating",
+        )
         rules = generate_rules(LLM_CLIENT, schemas, domain_config=DOMAIN_CONFIG)
         if not rules:
             raise ValueError("LLM returned no rules. The generation may have timed out or the model produced an unexpected response.")
@@ -386,18 +393,17 @@ def _background_bootstrap_generate(tool_name: str, parameters: dict):
         errors = validate_generated_yaml(yaml_str)
         if errors:
             raise ValueError(f"Validation errors: {'; '.join(errors)}")
-        AUDIT_STORE.create_pending_rule(
-            tool_name=tool_name,
-            proposed_yaml=yaml_str,
-            schemas_json=json.dumps(schemas),
-        )
+        AUDIT_STORE.update_pending_rule(pid, yaml_str)
     except Exception as e:
-        pid = AUDIT_STORE.create_pending_rule(
-            tool_name=tool_name,
-            proposed_yaml="",
-            schemas_json=json.dumps([{"name": tool_name, "parameters": {k: {"type": "string"} for k in parameters}}]),
-        )
-        AUDIT_STORE.mark_pending_rule_error(pid, str(e))
+        if pid is not None:
+            AUDIT_STORE.mark_pending_rule_error(pid, str(e))
+        else:
+            fallback_pid = AUDIT_STORE.create_pending_rule(
+                tool_name=tool_name,
+                proposed_yaml="",
+                schemas_json=json.dumps([{"name": tool_name, "parameters": {k: {"type": "string"} for k in parameters}}]),
+            )
+            AUDIT_STORE.mark_pending_rule_error(fallback_pid, str(e))
 
 
 @app.get("/health")
@@ -513,6 +519,19 @@ def bootstrap_reject_tool(tool_name: str, req: ApproveToolRequest):
         "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "reviewed_by": req.reviewed_by,
     })
+    return {"success": True, "tool_name": tool_name}
+
+
+class UpdatePendingYamlRequest(BaseModel):
+    proposed_yaml: str
+
+
+@app.put("/bootstrap/pending/{tool_name}", dependencies=[Depends(require_demo_token)])
+def bootstrap_update_pending(tool_name: str, req: UpdatePendingYamlRequest):
+    rule = AUDIT_STORE.get_pending_rule_by_tool(tool_name)
+    if not rule or rule["status"] not in ("pending", "generating"):
+        return {"success": False, "error": f"No pending rule found for tool '{tool_name}'"}
+    AUDIT_STORE.update_pending_rule(rule["id"], req.proposed_yaml)
     return {"success": True, "tool_name": tool_name}
 
 

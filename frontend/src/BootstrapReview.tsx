@@ -29,7 +29,7 @@ interface PendingRule {
   tool_name: string;
   proposed_yaml: string;
   schemas_json: string;
-  status: 'pending' | 'error';
+  status: 'pending' | 'error' | 'generating';
   error_message: string | null;
   generation_attempts: number;
   created_at: string;
@@ -129,6 +129,10 @@ export function BootstrapReview() {
   const [currentConfigYaml, setCurrentConfigYaml] = useState<string | null>(null);
   const [flashMessage, setFlashMessage] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<Record<string, boolean>>({});
+  const [showManualInput, setShowManualInput] = useState(false);
+  const [manualInput, setManualInput] = useState('');
+  const [editingToolName, setEditingToolName] = useState<string | null>(null);
+  const [editYaml, setEditYaml] = useState('');
 
   const fetchCurrentConfig = useCallback(async () => {
     try {
@@ -160,6 +164,14 @@ export function BootstrapReview() {
     if (tab === 'pending') fetchPending(true);
   }, [tab, fetchPending]);
 
+  useEffect(() => {
+    if (tab !== 'pending') return;
+    const hasGenerating = pendingRules.some(r => r.status === 'generating');
+    if (!hasGenerating) return;
+    const id = setInterval(() => fetchPending(), 3000);
+    return () => clearInterval(id);
+  }, [tab, pendingRules, fetchPending]);
+
   const handleIntrospect = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -184,15 +196,14 @@ export function BootstrapReview() {
     }
   }, [fetchCurrentConfig]);
 
-  const handleManual = useCallback(async () => {
-    const raw = window.prompt('Paste tool schemas as a JSON array:');
-    if (!raw) return;
+  const handleManualSubmit = useCallback(async () => {
+    if (!manualInput.trim()) return;
     setLoading(true);
     setError(null);
     setResult(null);
     setApproved(false);
     try {
-      const schemas = JSON.parse(raw);
+      const schemas = JSON.parse(manualInput);
       const res = await apiFetch('/bootstrap/introspect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -203,13 +214,15 @@ export function BootstrapReview() {
       if (data.error) throw new Error(data.error);
       setResult(data);
       setEditableYaml(data.yaml);
+      setShowManualInput(false);
+      setManualInput('');
       fetchCurrentConfig();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Manual introspection failed');
     } finally {
       setLoading(false);
     }
-  }, [fetchCurrentConfig]);
+  }, [manualInput, fetchCurrentConfig]);
 
   const handleApprove = useCallback(async () => {
     setLoading(true);
@@ -294,6 +307,29 @@ export function BootstrapReview() {
     }
   }, [fetchPending]);
 
+  const handleEditSave = useCallback(async (toolName: string) => {
+    setActionLoading(prev => ({ ...prev, [`edit_${toolName}`]: true }));
+    try {
+      const res = await apiFetch(`/bootstrap/pending/${toolName}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ proposed_yaml: editYaml }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || 'Save failed');
+      setEditingToolName(null);
+      setEditYaml('');
+      setFlashMessage(`Updated YAML for "${toolName}"`);
+      setTimeout(() => setFlashMessage(null), 3000);
+      fetchPending();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Save failed');
+    } finally {
+      setActionLoading(prev => ({ ...prev, [`edit_${toolName}`]: false }));
+    }
+  }, [editYaml, fetchPending]);
+
   const handleRetry = useCallback(async (rule: PendingRule) => {
     setActionLoading(prev => ({ ...prev, [`retry_${rule.id}`]: true }));
     try {
@@ -350,10 +386,28 @@ export function BootstrapReview() {
               <button className="btn btn-primary" onClick={handleIntrospect} disabled={loading}>
                 {loading ? 'Generating…' : 'Introspect tools'}
               </button>
-              <button className="btn btn-ghost" onClick={handleManual} disabled={loading}>
-                Manual JSON
+              <button className="btn btn-ghost" onClick={() => setShowManualInput(o => !o)} disabled={loading}>
+                {showManualInput ? 'Cancel' : 'Manual JSON'}
               </button>
             </div>
+
+            {showManualInput && (
+              <div style={{ marginTop: 8 }}>
+                <textarea
+                  className="textarea"
+                  placeholder="Paste tool schemas as a JSON array of { name, description, parameters } objects…"
+                  value={manualInput}
+                  onChange={e => setManualInput(e.target.value)}
+                  rows={6}
+                  spellCheck={false}
+                />
+                <div className="btn-row" style={{ marginTop: 4 }}>
+                  <button className="btn btn-primary btn-sm" onClick={handleManualSubmit} disabled={loading}>
+                    {loading ? 'Submitting…' : 'Submit schemas'}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           {error && <div className="error-msg">{error}</div>}
@@ -383,8 +437,34 @@ export function BootstrapReview() {
                       <span>Policy {rule.policy_rules.length}</span>
                       <span>Data {rule.data_sensitivity_rules.length}</span>
                     </div>
-                    <div className="yaml-box" style={{ borderBottom: 'none', maxHeight: 160 }}>
-                      {rule.reasoning}
+                    <div className="rule-desc-list">
+                      {rule.policy_rules.length > 0 && (
+                        <div className="rule-desc-group">
+                          <span className="rule-desc-label">Policy rules</span>
+                          {rule.policy_rules.map((pr, idx) => (
+                            <div className="rule-desc-item" key={idx}>
+                              <span className="rule-desc-bullet">•</span>
+                              <span>{pr.description}</span>
+                              <span className="rule-desc-score">score {pr.score}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {rule.data_sensitivity_rules.length > 0 && (
+                        <div className="rule-desc-group">
+                          <span className="rule-desc-label">Data sensitivity</span>
+                          {rule.data_sensitivity_rules.map((ds, idx) => (
+                            <div className="rule-desc-item" key={idx}>
+                              <span className="rule-desc-bullet">•</span>
+                              <span>{String(ds.field)}: {String(ds.pattern)}</span>
+                              <span className="rule-desc-score">score {ds.score}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div className="yaml-box" style={{ border: 'none', padding: '4px 0', marginTop: 4 }}>
+                        {rule.reasoning}
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -459,27 +539,42 @@ export function BootstrapReview() {
           )}
 
           {!pendingLoading && pendingRules.map(rule => (
-            <div key={rule.id} className={`tool-card${rule.status === 'error' ? ' is-error' : ''}`}>
+            <div key={rule.id} className={`tool-card${rule.status === 'error' ? ' is-error' : ''}${rule.status === 'generating' ? ' is-generating' : ''}`}>
               <div className="tool-card-head">
                 <div>
                   <span className="tool-name">{rule.tool_name}</span>
                   <span className={`status-pill is-${rule.status}`} style={{ marginLeft: 8 }}>
-                    {rule.status}
+                    {rule.status === 'generating' ? 'generating…' : rule.status}
                   </span>
                 </div>
                 <span className="muted-note">Attempt {rule.generation_attempts}</span>
               </div>
 
+              {rule.status === 'generating' && (
+                <div className="skeleton" style={{ margin: '8px 0' }}>Generating security rules…</div>
+              )}
+
               {rule.status === 'error' && rule.error_message && (
                 <div className="tool-error">{rule.error_message}</div>
               )}
 
-              {rule.proposed_yaml && (
+              {rule.status === 'pending' && rule.proposed_yaml && editingToolName === rule.tool_name ? (
+                <textarea
+                  className="textarea"
+                  value={editYaml}
+                  onChange={e => setEditYaml(e.target.value)}
+                  rows={12}
+                  spellCheck={false}
+                  style={{ marginBottom: 4 }}
+                />
+              ) : rule.status === 'pending' && rule.proposed_yaml ? (
                 <DiffView yaml={rule.proposed_yaml} toolName={rule.tool_name} currentYaml={currentConfigYaml} />
-              )}
+              ) : null}
 
               <div className="tool-actions">
-                {rule.status === 'error' ? (
+                {rule.status === 'generating' ? (
+                  <span className="muted-note">Auto-generating…</span>
+                ) : rule.status === 'error' ? (
                   <button
                     className="btn btn-ghost btn-sm"
                     onClick={() => handleRetry(rule)}
@@ -487,6 +582,22 @@ export function BootstrapReview() {
                   >
                     {actionLoading[`retry_${rule.id}`] ? 'Retrying…' : 'Retry generation'}
                   </button>
+                ) : editingToolName === rule.tool_name ? (
+                  <>
+                    <button
+                      className="btn btn-primary btn-sm"
+                      onClick={() => handleEditSave(rule.tool_name)}
+                      disabled={actionLoading[`edit_${rule.tool_name}`]}
+                    >
+                      {actionLoading[`edit_${rule.tool_name}`] ? 'Saving…' : 'Save'}
+                    </button>
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => { setEditingToolName(null); setEditYaml(''); }}
+                    >
+                      Cancel
+                    </button>
+                  </>
                 ) : (
                   <>
                     <button
@@ -495,6 +606,12 @@ export function BootstrapReview() {
                       disabled={actionLoading[rule.tool_name]}
                     >
                       {actionLoading[rule.tool_name] ? '…' : 'Approve'}
+                    </button>
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => { setEditingToolName(rule.tool_name); setEditYaml(rule.proposed_yaml); }}
+                    >
+                      Edit
                     </button>
                     <button
                       className="btn btn-danger btn-sm"
