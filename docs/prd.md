@@ -74,9 +74,9 @@ The decision never leaves local code. The LLM (Fireworks or Groq, config-swappab
 
 24. As a first-time user, I want AI Bootstrap output validated for structural correctness before I see it in the Bootstrap Review UI, so that I never approve malformed YAML.
 
-25. As a first-time user, I want the Bootstrap Review UI to show a table of proposed rules with an editable YAML textarea, so that I can tweak inaccurate values before locking them.
+25. As a first-time user, I want the Bootstrap Review UI to show rule cards with policy descriptions, a diff vs current config, and an editable YAML textarea, so that I can tweak inaccurate values before locking them.
 
-26. As a first-time user, I want unknown tools (not in the config) to fail closed: blocked and escalated to a human, so that no ungoverned action can slip through.
+26. As a first-time user, I want unknown tools (not in the config) to fail closed: blocked immediately with background auto-generation of rules, so that no ungoverned action can slip through and the reviewer can approve or reject the proposed rules in the Pending tab.
 
 27. As a judge at a hackathon, I want to see a live demo that shows a low-risk approval, a high-risk escalation, and a session-pattern escalation, so that I can clearly understand what differentiates this product.
 
@@ -98,7 +98,7 @@ The decision never leaves local code. The LLM (Fireworks or Groq, config-swappab
 
 The LLM integration (explanation layer, AI Bootstrap) is built behind a swappable provider interface (abstract `LLMClient` class). A factory function reads `llm_config.yaml` to select the active provider. Three providers exist: `MockLLMClient` (testing), `FallbackLLMClient` (Groq), and `FireworksLLMClient` (Fireworks AI). The `generate(prompt, output_schema)` method handles both explanation prompts and bootstrap-rules generation (selected via `output_schema["type"]`).
 
-For bootstrap generation, the client switches to a longer `max_tokens` limit (800 vs 300 for explanations) and a different system prompt targeting security policy generation.
+For bootstrap generation, the client switches to a longer `max_tokens` limit (3000 vs 300 for explanations) and a different system prompt targeting security policy generation.
 
 ### Explicit Trigger Passing to LLM
 
@@ -108,7 +108,7 @@ The explanation layer does not let the LLM infer the reason for a decision. The 
 
 The AI Bootstrap reads tool schemas (via MCP `tools/list` introspection or manual JSON input). A context-rich prompt is sent to the LLM, which returns structured JSON. The prompt context (industry, regulatory regimes, risk priorities) is sourced from `domain_config.yaml` instead of being hardcoded — editing the config file changes the generated rules without touching code. The JSON is converted to nested YAML with the LLM's reasoning comments preserved as YAML comments. Before the output reaches the Bootstrap Review UI, it passes through the same schema validation used for all config files.
 
-**Continuous auto-registration:** When an unknown tool is encountered during an intercept, the gateway blocks it AND automatically triggers bootstrap rule generation via FastAPI BackgroundTasks. The blocked response returns immediately (`gateway:unknown_tool`) — the generation is a background side effect that cannot delay the response. Proposed rules enter a SQLite-backed pending review queue with status tracking. The Bootstrap Review UI exposes a Pending Approvals tab with a flash-on-load notice when new rules are waiting. Each tool shows a line-based diff view (red/green — "no rules → proposed" as all-additions, or current-vs-proposed for re-generated tools). Per-tool approve/reject and "Approve All" are available. Failed LLM generations store the error and offer a "Retry" button. Approve and reject actions are logged to the audit timeline for a complete lifecycle narrative. Rules approved mid-window apply forward-only — past actions are not rescored. After approval, the generated config is written to `policy_config.bootstrap.yaml` and merged at request time — the base `policy_config.yaml` is never overwritten. **Planned (deferred, decision log #30):** approved bootstraps will move to a separate, gitignored runtime override (`policy_config.bootstrap.runtime.yaml`), keeping the committed `policy_config.bootstrap.yaml` as an untouched `tools: {}` baseline; until then, the committed file is reset to `tools: {}` after runs that approve tools.
+**Continuous auto-registration:** When an unknown tool is encountered during an intercept, the gateway blocks it AND automatically triggers bootstrap rule generation via FastAPI BackgroundTasks. The blocked response returns immediately (`gateway:unknown_tool`) — the generation is a background side effect that cannot delay the response. A pending rule is created immediately with `generating` status, giving visual feedback before the LLM finishes. Proposed rules enter a SQLite-backed pending review queue with status tracking (`generating` → `pending` or `error`). The Bootstrap Review UI exposes a Pending Approvals tab with a flash-on-load notice when new rules are waiting; a cross-tab poll fires a flash notification even while on the Generate tab. Each tool shows a line-based diff view (LCS red/green — all-additions for new tools, diffs for re-generated tools). Per-tool approve/reject, inline editing of proposed YAML, and "Approve All" are available. Failed LLM generations store the error and offer a "Retry" button. Approve and reject actions are logged to the audit timeline for a complete lifecycle narrative. Rules approved mid-window apply forward-only — past actions are not rescored. After approval, the generated config is written to `policy_config.bootstrap.yaml` and merged at request time — the base `policy_config.yaml` is never overwritten. **Planned (deferred, decision log #30):** approved bootstraps will move to a separate, gitignored runtime override (`policy_config.bootstrap.runtime.yaml`), keeping the committed `policy_config.bootstrap.yaml` as an untouched `tools: {}` baseline; until then, the committed file is reset to `tools: {}` after runs that approve tools.
 
 ### Session Risk Scorer
 
@@ -221,7 +221,7 @@ A good test asserts external behavior, not implementation details. It feeds inpu
 
 ## Further Notes
 
-- Two LLM providers are integrated: Groq (`llama-3.3-70b-versatile`) and Fireworks (`llama-v3p3-70b-instruct`). Switch via `provider:` in `engine/llm_config.yaml`. Both require an API key in `.env`.
+- Two LLM providers are integrated: Groq (`llama-3.3-70b-versatile`) and Fireworks (`accounts/fireworks/models/glm-5p2`). Switch via `provider:` in `engine/llm_config.yaml`. Both require an API key in `.env`.
 - Groq free tier has a 100K token/day limit — switch to Fireworks for higher throughput during demo/rehearsal.
 - The demo flow has two parts: **Beat 4** (3× check_balance → send_payment, demonstrating session pattern matching) and **Bootstrap** (3 acts: fail-closed → introspect/approve → live enforcement). Total runtime ~4 minutes.
 - The sequence-of-actions correlation (agent-wide sliding time window, displayed via session grouping) is the primary differentiator and should be foregrounded in the pitch. The six-factor score and regulatory tagging are supporting depth.
@@ -246,7 +246,7 @@ After the hackathon submission, a vulnerability scan + attack-surface test pass 
 | 1 | Path-traversal sanitization on `POST /bootstrap/approve` `target_path` | `_sanitize_bootstrap_path` resolves inside the engine config dir; rejects `..` escapes (400) |
 | 2 | LLM prompt-injection sanitization | `action_type`/`trigger`/`tool_name` are JSON-escaped before prompt interpolation |
 | 3 | Startup validation | Gateway fails to start if the configured LLM provider is missing its API key |
-| 4 | LLM timeout + fallback | Fireworks/Groq calls time out (default 15s) and fall back to mock instead of hanging |
+| 4 | LLM timeout + fail-fast | Fireworks/Groq calls time out after `timeout_seconds` (default 120s in `llm_config.yaml`) and fail fast (`max_retries=0`) instead of silent timeout producing empty output |
 | 5 | Rate limiting | 100 req/min/IP on all paths except `GET /health`; keyed on the real TCP peer, not spoofable `X-Forwarded-For` |
 | 6 | Max body size | 1 MB enforced for both `Content-Length` and chunked transfer encoding |
 | 7 | Audit retention | Rows older than `SYN_AUDIT_RETENTION_DAYS` (90) auto-purged on each `/intercept` |

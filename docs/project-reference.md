@@ -93,7 +93,7 @@ syn/
 │   ├── execution.py          # Tool execution stub
 │   ├── slack.py              # Slack webhook notifier
 │   ├── policy_config.yaml          # Base tool security profiles
-│   ├── policy_config.bootstrap.yaml # Bootstrap-generated rules (gitignored)
+│   ├── policy_config.bootstrap.yaml # Bootstrap-generated rules (tracked; reset to `tools: {}` between demos via `POST /admin/reset`)
 │   ├── regulatory_mapping.yaml      # EU AI Act + US regime triggers
 │   ├── risky_sequences.yaml         # Ordered pair session patterns
 │   └── llm_config.yaml              # LLM provider config
@@ -180,7 +180,7 @@ These controls were added in the post-submission hardening pass:
 
 Other behaviors:
 - **Startup validation:** the gateway fails to start if the configured LLM provider requires an API key that is missing.
-- **LLM timeout + fallback:** Fireworks/Groq calls time out after `timeout_seconds` (default 15s in `llm_config.yaml`) and fall back to the mock client rather than hanging or crashing. LLM calls run in a thread pool so the event loop is not blocked.
+- **LLM timeout + fail-fast:** Fireworks/Groq calls time out after `timeout_seconds` (default 120s in `llm_config.yaml`) and fail fast (`max_retries=0`). Bootstrap generation is token-heavy (~2500 tokens) and needs the higher timeout. LLM calls run in a thread pool so the event loop is not blocked.
 - **Request IDs:** every request gets a UUID `X-Request-ID` and structured logs are tagged with it.
 - **Bootstrap path sanitization:** `POST /bootstrap/approve` resolves `target_path` inside the engine config directory and rejects directory traversal.
 - **Prompt sanitization:** user-influenced values (`action_type`, `trigger`, `tool_name`) are JSON-escaped before LLM prompt interpolation to block prompt injection.
@@ -188,9 +188,10 @@ Other behaviors:
 
 ### Known residual risks (pre-production)
 
-- **No authentication/RBAC** on any endpoint, including `/resolve/{entry_id}` (executes a tool on approval) and `/bootstrap/approve*` (writes policy files). Acceptable for the hackathon; required before production.
-- **Fresh `agent_id` evasion:** rotating `agent_id` per action bypasses session/sequence tracking. Mitigated only by authentication.
+- **No authentication/RBAC** on any endpoint, including `/resolve/{entry_id}` (executes a tool on approval) and `/bootstrap/approve*` (writes policy files). Acceptable for the hackathon; required before production. A throwaway `X-Demo-Token` tripwire gates mutating endpoints but is not real auth.
+- **Fresh `agent_id` evasion:** rotating `agent_id` per action bypasses session/sequence tracking. Mitigated only by authentication. Per-visit randomized `agent_id` (#13) stops accidental cross-visit history bleed.
 - **Behind a trusted proxy:** when deployed behind a reverse proxy, the rate limiter must be changed to trust `X-Forwarded-For` from that proxy only (currently it uses the raw peer).
+- **Bootstrap persistence writes the committed baseline (deferred, #30):** approved bootstraps write to the git-tracked `policy_config.bootstrap.yaml`; use `POST /admin/reset` to restore `tools: {}` between demo sessions. A gitignored runtime override is planned.
 
 ### LLM Provider Config
 
@@ -404,6 +405,7 @@ Applied before weighted scoring — these override everything:
 |-----------|----------|
 | `severity > 90` | **BLOCKED** |
 | `policy >= 100` | **BLOCKED** |
+| `data_sensitivity >= 70` | **ESCALATED** |
 | `confidence < 40` | **ESCALATED** |
 
 ### Session Branches
@@ -462,11 +464,14 @@ Run these 4 calls in sequence in **LIVE** mode with the same `agent_id`:
 ### AI Bootstrap
 
 1. Select **Bootstrap** mode in the frontend
-2. Click **Introspect** (uses mock schemas or custom JSON)
-3. Review generated rules in the table
-4. Edit YAML if needed
-5. Click **Approve** → writes `policy_config.bootstrap.yaml`
-6. Switch to **Intercept** mode → the bootstrapped tool is no longer blocked
+2. Click **Introspect tools** (uses registered tools) or **Manual JSON** (paste custom schemas in the inline textarea)
+3. Review generated rules (policy descriptions bulleted, LLM reasoning shown)
+4. Review **Diff vs current config** to see additions/changes
+5. Edit the full YAML in the editable textarea if needed
+6. Click **Approve and write config** → written to `policy_config.bootstrap.yaml`
+7. Switch to **Intercept** mode → the bootstrapped tool is no longer blocked
+
+**Unknown tools:** When an unknown tool is called in Live mode, the gateway blocks it and auto-generates rules in the background. Navigate to the **Pending approvals** tab to see generation status (`generating…` → edit/approve/reject when ready).
 
 ---
 
@@ -505,6 +510,7 @@ thresholds:
 
 decision_tree:
   severity_floor: 90.0
+  data_sensitivity_floor: 70.0
   confidence_floor: 40.0
 
 weights:
@@ -565,5 +571,15 @@ Plus US regime flags: `FINRA`, `SEC` for financial action types.
 | 6 | Bootstrap review | Minimal table + "Approve All" | Per-tool staged approval with diff |
 | 7 | Slack integration | Incoming webhook (post-only) | Full Slack app with interactive buttons |
 | 8 | Database | SQLite | PostgreSQL |
+| 9 | Session ID source (revised) | Agent-managed lifecycle with gateway-issued IDs, time-bucket fallback | Same |
+| 10 | Sequence matching (revised) | N-action subsequence matching, unlimited gap tolerance | Configurable gap tolerance |
+| 11 | Cumulative severity (revised) | Agent-wide sliding time window (30 min), simple sum | Decay-weighted sum |
+| 12 | AI Bootstrap input | Continuous auto-registration on unknown tool with pending review queue | Same, with auto-rollback |
+| 13 | Bootstrap prompt | Dynamic context from `domain_config.yaml` | Vector store over policy docs |
+| 27 | Session-id spoofability | Harmless — `session_id` is audit-only, scoring uses `agent_id` | Authenticate the agent |
+| 28 | Data-sensitivity escalation floor | `data_sensitivity_floor: 70.0` in `decision_tree` | Per-factor floors on every axis |
+| 29 | Confidence as non-decaying trust | `confidence` only increases, never decays within retention window | Decay-weighted, authenticated confidence |
+| 30 | Bootstrap runtime override | Deferred — writes to tracked file; reset via `POST /admin/reset` | Separate gitignored override file |
+| 32–38 | Bootstrap UX hardening | Inline textarea, generating status, rule descriptions, pending editing, LCS diff, increased LLM timeout, introspect fallback | Side-by-side diff, SSE push, streaming LLM |
 
 Full details in `docs/decision-log.md`.
