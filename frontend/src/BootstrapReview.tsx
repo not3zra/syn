@@ -150,7 +150,17 @@ export function BootstrapReview() {
       setPendingRules(data);
       await fetchCurrentConfig();
       if (showFlash && data.length > 0) {
-        setFlashMessage(`${data.length} new rule${data.length > 1 ? 's' : ''} pending review`);
+        const genCount = data.filter(r => r.status === 'generating').length;
+        const pendCount = data.length - genCount;
+        let msg = '';
+        if (genCount > 0 && pendCount > 0) {
+          msg = `${genCount} generating, ${pendCount} ready for review`;
+        } else if (genCount > 0) {
+          msg = `${genCount} rule${genCount > 1 ? 's' : ''} generating…`;
+        } else {
+          msg = `${data.length} new rule${data.length > 1 ? 's' : ''} pending review`;
+        }
+        setFlashMessage(msg);
         setTimeout(() => setFlashMessage(null), 5000);
       }
     } catch (e) {
@@ -164,13 +174,31 @@ export function BootstrapReview() {
     if (tab === 'pending') fetchPending(true);
   }, [tab, fetchPending]);
 
+  const hasGenerating = pendingRules.some(r => r.status === 'generating');
+
   useEffect(() => {
     if (tab !== 'pending') return;
-    const hasGenerating = pendingRules.some(r => r.status === 'generating');
     if (!hasGenerating) return;
     const id = setInterval(() => fetchPending(), 3000);
     return () => clearInterval(id);
-  }, [tab, pendingRules, fetchPending]);
+  }, [tab, hasGenerating, fetchPending]);
+
+  /* Cross-tab poll: notify the user even when on the Generate tab */
+  useEffect(() => {
+    const id = setInterval(async () => {
+      try {
+        const res = await apiFetch('/bootstrap/pending');
+        if (!res.ok) return;
+        const data: PendingRule[] = await res.json();
+        setPendingRules(data);
+        if (tab !== 'pending' && data.some(r => r.status === 'generating')) {
+          setFlashMessage('New tool intercepted — generating rules…');
+          setTimeout(() => setFlashMessage(null), 5000);
+        }
+      } catch { /* ignore */ }
+    }, 5000);
+    return () => clearInterval(id);
+  }, [tab]);
 
   const handleIntrospect = useCallback(async () => {
     setLoading(true);

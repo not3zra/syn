@@ -33,7 +33,7 @@ class TestAuditStore:
         self.store.append({"action_type": "third", "decision": "escalated"})
         entries = self.store.list_all()
         assert len(entries) == 3
-        assert [e["action_type"] for e in entries] == ["first", "second", "third"]
+        assert [e["action_type"] for e in entries] == ["third", "second", "first"]
 
     def test_filter_by_outcome(self):
         self.store.append({"action_type": "a", "decision": "approved"})

@@ -105,12 +105,12 @@ class AuditStore:
     ) -> list[dict[str, Any]]:
         if outcome:
             rows = self._conn.execute(
-                "SELECT * FROM decisions WHERE decision = ? ORDER BY created_at ASC LIMIT ? OFFSET ?",
+                "SELECT * FROM decisions WHERE decision = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
                 (outcome, limit, offset),
             )
         else:
             rows = self._conn.execute(
-                "SELECT * FROM decisions ORDER BY created_at ASC LIMIT ? OFFSET ?",
+                "SELECT * FROM decisions ORDER BY created_at DESC LIMIT ? OFFSET ?",
                 (limit, offset),
             )
 
