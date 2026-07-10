@@ -96,9 +96,11 @@ The decision never leaves local code. The LLM (Fireworks or Groq, config-swappab
 
 ### LLM Provider Abstraction
 
-The LLM integration (explanation layer, AI Bootstrap) is built behind a swappable provider interface (abstract `LLMClient` class). A factory function reads `llm_config.yaml` to select the active provider. Four providers exist: `MockLLMClient` (testing), `FallbackLLMClient` (Groq / local OpenAI-compatible), and `FireworksLLMClient` (Fireworks AI). The `local` provider reuses `FallbackLLMClient` with configurable `base_url`, `api_key`, and `model` from environment variables. The `generate(prompt, output_schema)` method handles both explanation prompts and bootstrap-rules generation (selected via `output_schema["type"]`).
+The LLM integration (explanation layer, AI Bootstrap) is built behind a swappable provider interface (abstract `LLMClient` class). A factory function (`create_llm_client`) uses a precedence chain: env var → YAML → provider default. Five providers exist: `mock` (testing), `local` (any OpenAI-compatible endpoint, including AMD Developer Cloud vLLM), `openai`, `groq`, and `fireworks`. All remote providers share a single `OpenAIAPIClient` implementation — only the defaults differ. The `fallback` provider is a deprecated alias for `groq`. The `generate(prompt, output_schema)` method handles both explanation prompts and bootstrap-rules generation (selected via `output_schema["type"]`).
 
 For bootstrap generation, the client switches to a longer `max_tokens` limit (3000 vs 300 for explanations) and a different system prompt targeting security policy generation.
+
+**Startup health probe:** On startup the gateway probes the LLM via `client.models.list()` (OpenAI SDK), caching `LLMStatus` with latency. `GET /health` returns the cached status; `GET /health/llm` forces a fresh probe. The deterministic decision engine works without an LLM, so gateway status stays `"ok"` even when the LLM is unreachable.
 
 ### Explicit Trigger Passing to LLM
 
@@ -106,7 +108,7 @@ The explanation layer does not let the LLM infer the reason for a decision. The 
 
 ### AI Bootstrap Config Generation
 
-The AI Bootstrap reads tool schemas (via MCP `tools/list` introspection or manual JSON input). A context-rich prompt is sent to the LLM, which returns structured JSON. The prompt context (industry, regulatory regimes, risk priorities) is sourced from `domain_config.yaml` instead of being hardcoded — editing the config file changes the generated rules without touching code. The JSON is converted to nested YAML with the LLM's reasoning comments preserved as YAML comments. Before the output reaches the Bootstrap Review UI, it passes through the same schema validation used for all config files.
+The AI Bootstrap reads tool schemas (via MCP `tools/list` introspection or manual JSON input). A context-rich prompt is sent to the LLM, which returns structured JSON. The prompt context (industry, regulatory regimes, risk priorities) is sourced from `domain_config.yaml` instead of being hardcoded — editing the config file changes the generated rules without touching code. The JSON is converted to nested YAML with the LLM's reasoning comments preserved as YAML comments. Before the output reaches the Bootstrap Review UI, it passes through the same schema validation used for all config files. A custom `_render_yaml_list()` function handles mixed-type lists (dicts + scalars), nested lists, and `None` values — the PyYAML default serializer produced `None:` as dictionary keys and dropped null items.
 
 **Continuous auto-registration:** When an unknown tool is encountered during an intercept, the gateway blocks it AND automatically triggers bootstrap rule generation via FastAPI BackgroundTasks. The blocked response returns immediately (`gateway:unknown_tool`) — the generation is a background side effect that cannot delay the response. A pending rule is created immediately with `generating` status, giving visual feedback before the LLM finishes. Proposed rules enter a SQLite-backed pending review queue with status tracking (`generating` → `pending` or `error`). The Bootstrap Review UI exposes a Pending Approvals tab with a flash-on-load notice when new rules are waiting; a cross-tab poll fires a flash notification even while on the Generate tab. Each tool shows a line-based diff view (LCS red/green — all-additions for new tools, diffs for re-generated tools). Per-tool approve/reject, inline editing of proposed YAML, and "Approve All" are available. Failed LLM generations store the error and offer a "Retry" button. Approve and reject actions are logged to the audit timeline for a complete lifecycle narrative. Rules approved mid-window apply forward-only — past actions are not rescored. After approval, the generated config is written to `policy_config.bootstrap.yaml` and merged at request time — the base `policy_config.yaml` is never overwritten. **Planned (deferred, decision log #30):** approved bootstraps will move to a separate, gitignored runtime override (`policy_config.bootstrap.runtime.yaml`), keeping the committed `policy_config.bootstrap.yaml` as an untouched `tools: {}` baseline; until then, the committed file is reset to `tools: {}` after runs that approve tools.
 
@@ -141,11 +143,19 @@ The regulatory mapper implements the EU AI Act's Article structure:
 
 US financial regimes (FINRA, SEC) are flagged as additional badges where the action type is financial.
 
+### Decision Engine Ordering
+
+The decision pipeline in `engine/evaluate.py` applies checks in this order:
+
+1. **Floor checks (policy, severity, confidence, data_sensitivity):** Hard thresholds checked first. A `policy >= 100` violation is immediately `BLOCKED` regardless of session context. Floors were originally checked **after** session branches, which allowed a `policy=100` violation to be downgraded from `BLOCKED` to `ESCALATED` when a session pattern matched first — fixed by reordering.
+2. **Session branches (N-action pattern match, cumulative severity window):** Checked second. If no floor fires, session patterns can escalate.
+3. **Weighted blend:** If no floor or session branch fires, the six-factor weighted score determines the final decision.
+
 ### Docker Architecture
 
 Two primary containers:
 1. **gateway** — Python + FastAPI backend, MCP interception, risk engine, AI Bootstrap, LLM integration, SQLite, Slack
-2. **frontend** — React + Vite static build, served via nginx
+2. **frontend** — React + Vite static build, served via nginx with `/intercept`, `/tools`, `/health`, `/bootstrap`, `/resolve`, `/admin`, `/timeline` proxied to `gateway:8000`
 
 A third optional `local-model` container (AMD GPU / ROCm) was scoped but not built.
 
@@ -195,7 +205,7 @@ One real mock tool call through the actual running gateway (FastAPI routes, requ
 
 ### Live Verification Pattern
 
-Every feature follows the same cycle: build → claim done → manually verify live → bug found → fix → re-verify. This pattern caught: stale session history leaking, missing top_factor in LLM prompts, incorrect Slack risk-score labels, YAML quoting failures with regex patterns, and the FallbackLLMClient silently returning empty bootstrap rules. The Live API Verification suite (`tests/test_live_api_verification.py`) encodes these scenarios as automated tests.
+Every feature follows the same cycle: build → claim done → manually verify live → bug found → fix → re-verify. This pattern caught: stale session history leaking, missing top_factor in LLM prompts, incorrect Slack risk-score labels, YAML quoting failures with regex patterns, misconfigured LLM provider silently returning empty bootstrap rules, YAML renderer producing `None:` keys and `null` tool names, and the decision-ordering bug where session branches ran before floor checks. The Live API Verification suite (`tests/test_live_api_verification.py`) encodes these scenarios as automated tests.
 
 ### What makes a good test
 
@@ -221,7 +231,7 @@ A good test asserts external behavior, not implementation details. It feeds inpu
 
 ## Further Notes
 
-- Four LLM providers are integrated: `local` (AMD Developer Cloud / any OpenAI-compatible endpoint), `openai`, `groq`, and `fireworks`. All providers use the same `LLM_*` environment variables (`LLM_PROVIDER`, `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`) — no provider-specific env vars. Switch provider by changing `LLM_PROVIDER` in `.env` or `provider:` in `engine/llm_config.yaml`. Precedence: env var > YAML > provider default.
+- Five LLM providers are integrated: `mock` (testing), `local` (AMD Developer Cloud / any OpenAI-compatible endpoint), `openai`, `groq`, and `fireworks`. All providers use the same `LLM_*` environment variables (`LLM_PROVIDER`, `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`) — no provider-specific env vars. Switch provider by changing `LLM_PROVIDER` in `.env` or `provider:` in `engine/llm_config.yaml`. Precedence: env var > YAML > provider default.
 - Groq free tier has a 100K token/day limit — switch to Fireworks for higher throughput during demo/rehearsal.
 - The demo flow has two parts: **Beat 4** (3× check_balance → send_payment, demonstrating session pattern matching) and **Bootstrap** (3 acts: fail-closed → introspect/approve → live enforcement). Total runtime ~4 minutes.
 - The sequence-of-actions correlation (agent-wide sliding time window, displayed via session grouping) is the primary differentiator and should be foregrounded in the pitch. The six-factor score and regulatory tagging are supporting depth.
@@ -247,7 +257,7 @@ After the hackathon submission, a vulnerability scan + attack-surface test pass 
 | 2 | LLM prompt-injection sanitization | `action_type`/`trigger`/`tool_name` are JSON-escaped before prompt interpolation |
 | 3 | Startup validation | Gateway fails to start if the configured LLM provider is missing its API key |
 | 4 | LLM timeout + fail-fast | Fireworks/Groq calls time out after `timeout_seconds` (default 120s in `llm_config.yaml`) and fail fast (`max_retries=0`) instead of silent timeout producing empty output |
-| 5 | Rate limiting | 100 req/min/IP on all paths except `GET /health`; keyed on the real TCP peer, not spoofable `X-Forwarded-For` |
+| 5 | Rate limiting | 100 req/min/IP on all paths except `GET /health` and `GET /health/llm`; keyed on the real TCP peer, not spoofable `X-Forwarded-For` |
 | 6 | Max body size | 1 MB enforced for both `Content-Length` and chunked transfer encoding |
 | 7 | Audit retention | Rows older than `SYN_AUDIT_RETENTION_DAYS` (90) auto-purged on each `/intercept` |
 | 8 | Request IDs | UUID `X-Request-ID` + structured logs tagged per request |
