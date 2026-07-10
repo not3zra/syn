@@ -1,6 +1,6 @@
 # PRD: AI Action Firewall
 
-**Status:** Implemented (all core issues live-verified)
+**Status:** Implemented (core issues live-verified); deploy-safety prereqs #33–#36 added (demo-token tripwire, randomized per-visit `agent_id`, `POST /admin/reset`)
 **Target track:** AMD ACT II Hackathon — Unicorn Track
 **Submission deadline:** July 11, 2026, 15:00 UTC
 
@@ -32,7 +32,7 @@ The decision never leaves local code. The LLM (Fireworks or Groq, config-swappab
 
 3. As a security reviewer, I want every tool call scored against severity, policy compliance, anomaly, data sensitivity, confidence, and tool trust, so that no risk axis is invisible.
 
-4. As a security reviewer, I want a decision-tree floor that applies hard rules (severity > 90 → reject, policy violation → reject, confidence < 40 → escalate) before any weighted blending, so that critical violations cannot be averaged away by low scores on other factors.
+4. As a security reviewer, I want a decision-tree floor that applies hard rules (severity > 90 → reject, policy violation → reject, data_sensitivity ≥ 70 → escalate, confidence < 40 → escalate) before any weighted blending, so that critical violations cannot be averaged away by low scores on other factors. The `data_sensitivity` floor (#28) routes PII/sensitive access (e.g. `SELECT * FROM users`) and sensitive deletes to a human even when the blended weighted score stays low.
 
 5. As a security reviewer, I want the anomaly factor computed by a statistical scorer (z-score, rolling average, frequency) by default, so that it works reliably without any GPU or model dependency.
 
@@ -108,7 +108,7 @@ The explanation layer does not let the LLM infer the reason for a decision. The 
 
 The AI Bootstrap reads tool schemas (via MCP `tools/list` introspection or manual JSON input). A context-rich prompt is sent to the LLM, which returns structured JSON. The prompt context (industry, regulatory regimes, risk priorities) is sourced from `domain_config.yaml` instead of being hardcoded — editing the config file changes the generated rules without touching code. The JSON is converted to nested YAML with the LLM's reasoning comments preserved as YAML comments. Before the output reaches the Bootstrap Review UI, it passes through the same schema validation used for all config files.
 
-**Continuous auto-registration:** When an unknown tool is encountered during an intercept, the gateway blocks it AND automatically triggers bootstrap rule generation via FastAPI BackgroundTasks. The blocked response returns immediately (`gateway:unknown_tool`) — the generation is a background side effect that cannot delay the response. Proposed rules enter a SQLite-backed pending review queue with status tracking. The Bootstrap Review UI exposes a Pending Approvals tab with a flash-on-load notice when new rules are waiting. Each tool shows a line-based diff view (red/green — "no rules → proposed" as all-additions, or current-vs-proposed for re-generated tools). Per-tool approve/reject and "Approve All" are available. Failed LLM generations store the error and offer a "Retry" button. Approve and reject actions are logged to the audit timeline for a complete lifecycle narrative. Rules approved mid-window apply forward-only — past actions are not rescored. After approval, the generated config is written to `policy_config.bootstrap.yaml` and merged at request time — the base `policy_config.yaml` is never overwritten.
+**Continuous auto-registration:** When an unknown tool is encountered during an intercept, the gateway blocks it AND automatically triggers bootstrap rule generation via FastAPI BackgroundTasks. The blocked response returns immediately (`gateway:unknown_tool`) — the generation is a background side effect that cannot delay the response. Proposed rules enter a SQLite-backed pending review queue with status tracking. The Bootstrap Review UI exposes a Pending Approvals tab with a flash-on-load notice when new rules are waiting. Each tool shows a line-based diff view (red/green — "no rules → proposed" as all-additions, or current-vs-proposed for re-generated tools). Per-tool approve/reject and "Approve All" are available. Failed LLM generations store the error and offer a "Retry" button. Approve and reject actions are logged to the audit timeline for a complete lifecycle narrative. Rules approved mid-window apply forward-only — past actions are not rescored. After approval, the generated config is written to `policy_config.bootstrap.yaml` and merged at request time — the base `policy_config.yaml` is never overwritten. **Planned (deferred, decision log #30):** approved bootstraps will move to a separate, gitignored runtime override (`policy_config.bootstrap.runtime.yaml`), keeping the committed `policy_config.bootstrap.yaml` as an untouched `tools: {}` baseline; until then, the committed file is reset to `tools: {}` after runs that approve tools.
 
 ### Session Risk Scorer
 
@@ -157,7 +157,7 @@ Four YAML config files:
 3. **risky_sequences.yaml** — N-action chain patterns for session risk scoring (subsequence matching, unlimited gap tolerance).
 4. **regulatory_mapping.yaml** — EU AI Act tier triggers and US regime rules.
 
-All configs are validated against a schema on load.
+All configs are validated against a schema on load. **Planned (deferred, #30):** a fifth, gitignored `policy_config.bootstrap.runtime.yaml` will hold runtime-approved tools so the committed `policy_config.bootstrap.yaml` stays a clean `tools: {}` baseline.
 
 ### Unknown Tool Handling
 
@@ -206,7 +206,7 @@ A good test asserts external behavior, not implementation details. It feeds inpu
 ## Out of Scope
 
 - **Production-grade event store.** SQLite is sufficient for the hackathon.
-- **Full RBAC/authentication.** The gateway trusts its caller for the hackathon.
+- **Full RBAC/authentication.** The gateway trusts its caller for the hackathon. A throwaway `X-Demo-Token` tripwire (#14) was added as a deploy prereq to gate mutations on the public demo, but it is extractable by design and is not real auth — full authentication/RBAC (#19) remains out of scope.
 - **Multi-tenant isolation.** Single-tenant demo only.
 - **Real agent integration.** Demo uses mock tools and pre-scripted triggers. Live agent integration is a stretch goal.
 - **Replay feature.** Requires full input state snapshotting — too expensive for Day 4-5.
@@ -256,8 +256,20 @@ After the hackathon submission, a vulnerability scan + attack-surface test pass 
 | 11 | SSRF guard | `POST /bootstrap/introspect` rejects an `api_base` that is non-HTTP(S) or resolves to a private/loopback/link-local address |
 | 12 | No dev reload in container | `gateway/Dockerfile` no longer launches uvicorn with `--reload` |
 
+### Deploy-safety prereqs for public demo (added July 2026)
+
+These close the gap for a public Fly.io demo without real auth (which stays deferred, #19). They are throwaway demo guards, not a security boundary — the token is baked into the client bundle and is extractable by design:
+
+| # | Control | Implementation |
+|---|----------|----------------|
+| 13 | Randomized per-visit `agent_id` | Frontend generates a fresh `crypto.randomUUID()` in memory on each page load and sends it as `agent_id` on `/intercept`. Not stored, not user-supplied — gives normal users cross-visit history isolation. `agent_id` is still attacker-controllable, so this is isolation, not authentication (#20/#29). |
+| 14 | `X-Demo-Token` tripwire | `require_demo_token` FastAPI dependency gates `/intercept`, `/resolve/{entry_id}`, `/bootstrap/approve`, `/bootstrap/approve/{tool}`, `/bootstrap/reject/{tool}`, `/bootstrap/approve-all`, `/bootstrap/retry/{id}`, `/bootstrap/introspect`, `/admin/reset`. No-op when `DEMO_TOKEN` env is unset (local dev). On Fly (`FLY_APP_NAME` set) the gateway **refuses to start** if `DEMO_TOKEN` is unset (`gateway/main.py:166`). |
+| 15 | `POST /admin/reset` | Token-gated endpoint that clears the audit store (decisions + pending rules + sessions) and rewrites `policy_config.bootstrap.yaml` to `tools: {}`. Safe teardown between demo sessions. |
+| 16 | Frontend token wiring | `api.ts` attaches `X-Demo-Token` (from `VITE_DEMO_TOKEN`) to every request; `vite.config.ts` proxy covers `/bootstrap`, `/resolve`, `/admin`, `/timeline`; `frontend/Dockerfile` passes `VITE_DEMO_TOKEN` as a build arg so the token is inlined into the static bundle. |
+
 ### Residual risks (require pre-production work)
 
-- **No authentication/RBAC.** Out of scope for the hackathon (see Out of Scope). `/resolve/{entry_id}` executes a tool on approval and `/bootstrap/approve*` writes policy files — both are unprotected.
-- **Fresh `agent_id` evasion.** Rotating `agent_id` per action bypasses session and sliding-window tracking. Only authentication mitigates this.
-- **Proxy deployment.** The rate limiter keys on the raw peer IP. Behind a trusted reverse proxy it must be changed to trust `X-Forwarded-For` from that proxy only.
+- **No authentication/RBAC (partially mitigated).** A throwaway `X-Demo-Token` tripwire (#14) now gates all mutating/introspect endpoints and the gateway refuses to boot on Fly without `DEMO_TOKEN`. This is a ship-blocking demo guard, not real auth — the token is in the public bundle and extractable. Full RBAC (#19) remains deferred.
+- **Fresh `agent_id` evasion (partially mitigated).** Per-visit randomized `agent_id` (#13) stops a normal user's history bleeding across visits, but `agent_id` is still self-reported and spoofable, so an attacker can still cycle IDs to bypass session/pattern/cumulative tracking. Only authentication (#19) closes this.
+- **Bootstrap persistence writes the committed baseline (deferred, #30).** Approved bootstraps write into the git-tracked `policy_config.bootstrap.yaml`; use `POST /admin/reset` (#15) to reset it. A gitignored runtime override is planned.
+- **Proxy deployment.** The rate limiter keys on the raw peer IP. Behind a trusted reverse proxy it must be changed to trust `X-Forwarded-For` from that proxy only (`SYN_TRUSTED_PROXY`).
