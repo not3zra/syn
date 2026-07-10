@@ -8,6 +8,10 @@ export default defineConfig({
       '/intercept': 'http://localhost:8000',
       '/tools': 'http://localhost:8000',
       '/health': 'http://localhost:8000',
+      '/bootstrap': 'http://localhost:8000',
+      '/resolve': 'http://localhost:8000',
+      '/admin': 'http://localhost:8000',
+      '/timeline': 'http://localhost:8000',
     },
   },
 })

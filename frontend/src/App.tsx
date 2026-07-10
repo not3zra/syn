@@ -2,9 +2,8 @@ import { useState, useCallback, useEffect } from 'react';
 import type { DecisionResponse, ToolInfo } from './types';
 import { TrustReceipt } from './TrustReceipt';
 import { BootstrapReview } from './BootstrapReview';
+import { API_BASE, apiFetch } from './api';
 import './App.css';
-
-const API_BASE = import.meta.env.VITE_API_BASE || '';
 
 const AGENT_ID = crypto.randomUUID();
 
@@ -58,7 +57,7 @@ export default function App() {
     }
 
     try {
-      const res = await fetch(`${API_BASE}/intercept`, {
+      const res = await apiFetch('/intercept', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

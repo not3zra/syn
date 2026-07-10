@@ -4,6 +4,8 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY . .
+ARG VITE_DEMO_TOKEN
+ARG VITE_API_BASE
 RUN npm run build
 
 FROM nginx:alpine

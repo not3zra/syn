@@ -1,6 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-
-const API_BASE = import.meta.env.VITE_API_BASE || '';
+import { apiFetch } from './api';
 
 interface ToolRule {
   tool_name: string;
@@ -78,7 +77,7 @@ export function BootstrapReview() {
   const fetchPending = useCallback(async (showFlash = false) => {
     setPendingLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/bootstrap/pending`);
+      const res = await apiFetch('/bootstrap/pending');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: PendingRule[] = await res.json();
       setPendingRules(data);
@@ -106,7 +105,7 @@ export function BootstrapReview() {
     setApproved(false);
 
     try {
-      const res = await fetch(`${API_BASE}/bootstrap/introspect`, {
+      const res = await apiFetch('/bootstrap/introspect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ manual_schemas: null }),
@@ -134,7 +133,7 @@ export function BootstrapReview() {
 
     try {
       const schemas = JSON.parse(raw);
-      const res = await fetch(`${API_BASE}/bootstrap/introspect`, {
+      const res = await apiFetch('/bootstrap/introspect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ manual_schemas: schemas }),
@@ -156,7 +155,7 @@ export function BootstrapReview() {
     setError(null);
 
     try {
-      const res = await fetch(`${API_BASE}/bootstrap/approve`, {
+      const res = await apiFetch('/bootstrap/approve', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ yaml_content: editableYaml }),
@@ -182,7 +181,7 @@ export function BootstrapReview() {
   const handleApproveTool = useCallback(async (toolName: string) => {
     setActionLoading(prev => ({ ...prev, [toolName]: true }));
     try {
-      const res = await fetch(`${API_BASE}/bootstrap/approve/${toolName}`, {
+      const res = await apiFetch(`/bootstrap/approve/${toolName}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reviewed_by: 'demo-admin' }),
@@ -203,7 +202,7 @@ export function BootstrapReview() {
   const handleRejectTool = useCallback(async (toolName: string) => {
     setActionLoading(prev => ({ ...prev, [toolName]: true }));
     try {
-      const res = await fetch(`${API_BASE}/bootstrap/reject/${toolName}`, {
+      const res = await apiFetch(`/bootstrap/reject/${toolName}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reviewed_by: 'demo-admin' }),
@@ -224,7 +223,7 @@ export function BootstrapReview() {
   const handleApproveAll = useCallback(async () => {
     setActionLoading(prev => ({ ...prev, _all: true }));
     try {
-      const res = await fetch(`${API_BASE}/bootstrap/approve-all`, {
+      const res = await apiFetch('/bootstrap/approve-all', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reviewed_by: 'demo-admin' }),
@@ -245,7 +244,7 @@ export function BootstrapReview() {
   const handleRetry = useCallback(async (rule: PendingRule) => {
     setActionLoading(prev => ({ ...prev, [`retry_${rule.id}`]: true }));
     try {
-      const res = await fetch(`${API_BASE}/bootstrap/retry/${rule.id}`, {
+      const res = await apiFetch(`/bootstrap/retry/${rule.id}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tool_name: rule.tool_name, parameters: {} }),
