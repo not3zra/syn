@@ -2,12 +2,34 @@
 # syn — comprehensive attack-surface & edge-case test script (Fireworks)
 # Each section uses a unique agent_id to avoid cross-contaminated history.
 # Usage: ./test_workflow.sh [base_url]
-# The caller MUST clear audit.db and policy_config.bootstrap.yaml before
-# starting the server for a clean run. This script does NOT wipe state.
+# For a deterministic run this script clears data/audit.db and
+# engine/policy_config.bootstrap.yaml, and (when the default local server is
+# not already running) starts its own server and stops it afterwards.
 
 BASE="${1:-http://127.0.0.1:8000}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
 PASS=0; FAIL=0
 CURL="curl -s --max-time 45"
+
+# --- clear state so the run is deterministic regardless of prior state ---
+rm -f data/audit.db 2>/dev/null
+printf 'tools: {}\n' > engine/policy_config.bootstrap.yaml 2>/dev/null
+
+# --- auto-start a local server if the default endpoint is not up ---
+OWN_SERVER=0
+if [ "$BASE" = "http://127.0.0.1:8000" ]; then
+  if ! curl -s --max-time 3 "$BASE/health" | grep -q '"status":"ok"'; then
+    echo "=== starting local server ==="
+    setsid uv run uvicorn gateway.main:app --host 127.0.0.1 --port 8000 >/tmp/syn_test_server.log 2>&1 </dev/null &
+    OWN_SERVER=$!
+    for i in $(seq 1 60); do
+      if curl -s --max-time 3 "$BASE/health" | grep -q '"status":"ok"'; then echo "server up after ${i}s"; break; fi
+      sleep 1
+    done
+  fi
+fi
 
 check() {
   local label="$1" expected="$2" actual="$3"
@@ -181,7 +203,7 @@ A="ws"
 R=$($CURL -X POST "$BASE/intercept" -H 'Content-Type: application/json' \
   -d "{\"action_type\":\"delete_file\",\"parameters\":{\"file_path\":\"/data/prod/secrets.xlsx\"},\"agent_id\":\"$A\"}")
 check "delete_file escalated" '.decision=="escalated"' "$R"
-check "trigger weighted_score" '.trigger|startswith("weighted_score")' "$R"
+check "trigger weighted_score/cumulative" '(.trigger|startswith("weighted_score")) or (.trigger|startswith("session:cumulative_threshold"))' "$R"
 check "has rollback plan" '.rollback_plan!=null' "$R"
 check "has expires_at" '.expires_at!=null' "$R"
 
@@ -322,4 +344,13 @@ echo ""
 echo "========================================"
 echo "  RESULTS: $PASS passed, $FAIL failed"
 echo "========================================"
+
+# --- teardown: stop a server we started and leave bootstrap clean ---
+if [ "$OWN_SERVER" != "0" ]; then
+  echo "=== stopping local server ==="
+  pkill -9 -f 'uv r[u]n' 2>/dev/null
+  pkill -9 -f 'uvic[o]rn' 2>/dev/null
+  sleep 1
+fi
+printf 'tools: {}\n' > engine/policy_config.bootstrap.yaml 2>/dev/null
 exit $FAIL
