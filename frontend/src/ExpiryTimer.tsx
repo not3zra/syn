@@ -30,7 +30,7 @@ export function ExpiryTimer({ expiresAt }: ExpiryTimerProps) {
   }, [expiresAt]);
 
   return (
-    <div className="expiry-timer">
+    <div className="expiry">
       <span className="expiry-label">Auto-expiry</span>
       <span className="expiry-value">{remaining}</span>
     </div>

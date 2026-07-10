@@ -93,7 +93,20 @@ def _format_pair(trigger: str) -> str:
     return ""
 
 
-def _get_mock_explanation(action_type: str, decision: str, trigger: str, top_factor: str | None = None) -> str:
+def _get_mock_explanation(
+    action_type: str,
+    decision: str,
+    trigger: str,
+    top_factor: str | None = None,
+    reason: str | None = None,
+) -> str:
+    if reason:
+        return (
+            f"{reason} "
+            f"Because of this, the {action_type} action was {decision}. "
+            f"To proceed, request a security review or contact your administrator for approval."
+        )
+
     if "pattern_matched" in trigger:
         pair_str = _format_pair(trigger)
         if pair_str:
@@ -163,6 +176,7 @@ class MockLLMClient(LLMClient):
         action_type = "the action"
         decision = "evaluated"
         trigger = "unknown"
+        reason = None
 
         top_factor = None
         for line in prompt.split("\n"):
@@ -181,8 +195,12 @@ class MockLLMClient(LLMClient):
             if "The most significant contributing factor is " in line:
                 raw = line.split("The most significant contributing factor is ")[1].strip()
                 top_factor = _js_strip(raw.split(".")[0].strip())
+            if "System reason:" in line:
+                reason = line.split("System reason:", 1)[1].strip()
 
-        explanation = _get_mock_explanation(action_type, decision, trigger, top_factor=top_factor)
+        explanation = _get_mock_explanation(
+            action_type, decision, trigger, top_factor=top_factor, reason=reason
+        )
         remediation = (
             f"To proceed with this {action_type} action, please request a security review "
             f"or contact your administrator for approval."
@@ -429,6 +447,7 @@ def build_explanation_prompt(
     trigger: str,
     factor_scores: dict[str, float],
     top_factor: str | None = None,
+    reason: str | None = None,
 ) -> str:
     scores_str = ", ".join(f"{k}: {v}" for k, v in factor_scores.items())
     prompt = (
@@ -439,5 +458,12 @@ def build_explanation_prompt(
     )
     if top_factor:
         prompt += f"The most significant contributing factor is {_js(top_factor)}. Mention this factor in your explanation.\n"
+    if reason:
+        prompt += (
+            f"System reason: {reason}\n"
+            f"Use the system reason above as the basis for your explanation. Write in plain language a "
+            f"non-technical reviewer can understand, and state what the agent or user should do to proceed "
+            f"or remediate the issue.\n"
+        )
     prompt += "Do not infer other reasons."
     return prompt

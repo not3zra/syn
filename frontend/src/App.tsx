@@ -1,27 +1,50 @@
 import { useState, useCallback, useEffect } from 'react';
 import type { DecisionResponse, ToolInfo } from './types';
+import { Composer } from './Composer';
 import { TrustReceipt } from './TrustReceipt';
 import { BootstrapReview } from './BootstrapReview';
+import { Timeline } from './Timeline';
+import { BrandMark } from './BrandMark';
+import { ResetGlyph } from './icons';
 import { API_BASE, apiFetch } from './api';
 import './App.css';
 
 const AGENT_ID = crypto.randomUUID();
 
 const PRESET_TOOLS: Record<string, Record<string, string>> = {
-  'send_payment': { amount: '100', currency: 'USD', recipient: 'alice' },
-  'delete_file': { file_path: '/tmp/test.txt' },
-  'query_database': { query: 'SELECT * FROM users' },
+  send_payment: { amount: '100', currency: 'USD', recipient: 'alice' },
+  delete_file: { file_path: '/tmp/test.txt' },
+  query_database: { query: 'SELECT * FROM users' },
 };
 
+function EmptyState() {
+  return (
+    <div className="empty">
+      <div className="empty-glyph"><BrandMark size={34} /></div>
+      <h2>Intercept a tool call</h2>
+      <p>
+        Pick a tool and its parameters on the left, then intercept. syn scores the action,
+        shows the exact trigger it fired on, and writes the decision to the audit trail.
+      </p>
+      <ul className="empty-points">
+        <li>Approved, escalated, or blocked in a single pass</li>
+        <li>Six deterministic risk factors, no black box</li>
+        <li>Session patterns correlated across the agent</li>
+      </ul>
+    </div>
+  );
+}
+
 export default function App() {
+  const [view, setView] = useState<'console' | 'bootstrap'>('console');
   const [actionType, setActionType] = useState('send_payment');
   const [parameters, setParameters] = useState('{}');
   const [decision, setDecision] = useState<DecisionResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tools, setTools] = useState<ToolInfo[]>([]);
-  const [mode, setMode] = useState<'intercept' | 'bootstrap'>('intercept');
   const [simulationMode, setSimulationMode] = useState(false);
+  const [refreshNonce, setRefreshNonce] = useState(0);
 
   useEffect(() => {
     fetch(`${API_BASE}/tools`)
@@ -38,8 +61,7 @@ export default function App() {
 
   const handleToolChange = useCallback((tool: string) => {
     setActionType(tool);
-    const preset = PRESET_TOOLS[tool];
-    setParameters(JSON.stringify(preset || {}, null, 2));
+    setParameters(JSON.stringify(PRESET_TOOLS[tool] || {}, null, 2));
   }, []);
 
   const handleSubmit = useCallback(async () => {
@@ -70,6 +92,7 @@ export default function App() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: DecisionResponse = await res.json();
       setDecision(data);
+      setRefreshNonce(n => n + 1);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Request failed');
     } finally {
@@ -77,132 +100,78 @@ export default function App() {
     }
   }, [actionType, parameters, simulationMode]);
 
+  const handleReset = useCallback(async () => {
+    try {
+      const res = await apiFetch('/admin/reset', { method: 'POST' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setDecision(null);
+      setError(null);
+      setRefreshNonce(n => n + 1);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Reset failed');
+    }
+  }, []);
+
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <div className="sidebar-header">
-          <span className="sidebar-logo">◆</span>
-          <h1 className="sidebar-title">syn</h1>
-          <span className="sidebar-sub">governance</span>
+    <div className={`app${view === 'bootstrap' ? ' app--bootstrap' : ''}`}>
+      <header className="topbar">
+        <BrandMark size={26} />
+        <span className="wordmark-sub">governance</span>
+        <nav className="console-nav" aria-label="Views">
+          <button
+            className={`nav-link${view === 'console' ? ' active' : ''}`}
+            onClick={() => setView('console')}
+          >
+            Console
+          </button>
+          <button
+            className={`nav-link${view === 'bootstrap' ? ' active' : ''}`}
+            onClick={() => setView('bootstrap')}
+          >
+            Bootstrap
+          </button>
+        </nav>
+        <div className="topbar-spacer" />
+        <div className="topbar-status">
+          <span className="dot" />
+          <span>demo</span>
+          <span className="mono">agent {AGENT_ID.slice(0, 8)}</span>
         </div>
+        <button className="btn btn-ghost btn-sm" onClick={handleReset}>
+          <ResetGlyph /> Reset demo
+        </button>
+      </header>
 
-        <div className="sidebar-section">
-          <label className="input-label">Mode</label>
-          <div style={{ display: 'flex', gap: '6px' }}>
-            <button
-              className="submit-btn"
-              onClick={() => setMode('intercept')}
-              style={{
-                flex: 1,
-                background: mode === 'intercept' ? 'var(--accent)' : 'var(--bg-card)',
-                color: mode === 'intercept' ? 'white' : 'var(--text-primary)',
-                border: mode === 'intercept' ? 'none' : '1px solid var(--border)',
-              }}
-            >
-              Intercept
-            </button>
-            <button
-              className="submit-btn"
-              onClick={() => setMode('bootstrap')}
-              style={{
-                flex: 1,
-                background: mode === 'bootstrap' ? 'var(--accent)' : 'var(--bg-card)',
-                color: mode === 'bootstrap' ? 'white' : 'var(--text-primary)',
-                border: mode === 'bootstrap' ? 'none' : '1px solid var(--border)',
-              }}
-            >
-              Bootstrap
-            </button>
+      {view === 'console' ? (
+        <>
+          <aside className="composer-pane">
+            <Composer
+              tools={tools}
+              actionType={actionType}
+              parameters={parameters}
+              simulationMode={simulationMode}
+              loading={loading}
+              onToolChange={handleToolChange}
+              onParamsChange={setParameters}
+              onModeChange={setSimulationMode}
+              onSubmit={handleSubmit}
+            />
+          </aside>
+          <main className="output">
+            <div className="output-main">
+              {error && <div className="error-msg">{error}</div>}
+              {decision ? <TrustReceipt data={decision} /> : <EmptyState />}
+            </div>
+            <Timeline refreshKey={refreshNonce} />
+          </main>
+        </>
+      ) : (
+        <main className="output output--full">
+          <div className="output-inner">
+            <BootstrapReview />
           </div>
-        </div>
-
-        {mode === 'intercept' && (
-          <>
-            <div className="sidebar-section">
-              <label className="input-label">Runtime Mode</label>
-              <div style={{ display: 'flex', gap: '6px' }}>
-                <button
-                  className="submit-btn"
-                  onClick={() => setSimulationMode(false)}
-                  style={{
-                    flex: 1,
-                    background: !simulationMode ? 'var(--accent)' : 'var(--bg-card)',
-                    color: !simulationMode ? 'white' : 'var(--text-primary)',
-                    border: !simulationMode ? 'none' : '1px solid var(--border)',
-                    fontSize: '12px',
-                    padding: '8px',
-                  }}
-                >
-                  LIVE
-                </button>
-                <button
-                  className="submit-btn"
-                  onClick={() => setSimulationMode(true)}
-                  style={{
-                    flex: 1,
-                    background: simulationMode ? 'var(--accent)' : 'var(--bg-card)',
-                    color: simulationMode ? 'white' : 'var(--text-primary)',
-                    border: simulationMode ? 'none' : '1px solid var(--border)',
-                    fontSize: '12px',
-                    padding: '8px',
-                  }}
-                >
-                  SIMULATION
-                </button>
-              </div>
-            </div>
-
-            <div className="sidebar-section">
-              <label className="input-label">Tool</label>
-              <select
-                className="input-select"
-                value={actionType}
-                onChange={e => handleToolChange(e.target.value)}
-              >
-                {tools.map(t => (
-                  <option key={t.name} value={t.name}>{t.name}</option>
-                ))}
-                <option value="unknown_tool">unknown_tool</option>
-              </select>
-            </div>
-
-            <div className="sidebar-section">
-              <label className="input-label">Parameters (JSON)</label>
-              <textarea
-                className="input-textarea"
-                value={parameters}
-                onChange={e => setParameters(e.target.value)}
-                rows={8}
-                spellCheck={false}
-              />
-            </div>
-
-            <button
-              className="submit-btn"
-              onClick={handleSubmit}
-              disabled={loading}
-            >
-              {loading ? 'Intercepting...' : 'Intercept Tool Call'}
-            </button>
-
-            {error && <div className="error-msg">{error}</div>}
-          </>
-        )}
-      </aside>
-
-      <main className="main-content">
-        {mode === 'bootstrap' ? (
-          <BootstrapReview />
-        ) : decision ? (
-          <TrustReceipt data={decision} />
-        ) : (
-          <div className="empty-state">
-            <div className="empty-icon">◆</div>
-            <h2>syn governance</h2>
-            <p>Select a tool and parameters, then intercept to see the decision.</p>
-          </div>
-        )}
-      </main>
+        </main>
+      )}
     </div>
   );
 }

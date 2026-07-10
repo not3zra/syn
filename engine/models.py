@@ -48,6 +48,7 @@ class RiskEngineResult:
     decision: Decision
     trigger: str
     factor_scores: FactorScores
+    reason: str | None = None
     session_data: SessionData = field(default_factory=SessionData)
     regulatory_tier: str = "minimal_risk"
     us_regime_flags: list[str] = field(default_factory=list)

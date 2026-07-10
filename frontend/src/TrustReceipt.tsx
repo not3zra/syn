@@ -1,24 +1,13 @@
-import { useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import type { DecisionResponse } from './types';
 import { RiskGauge } from './RiskGauge';
 import { FactorBreakdown } from './FactorBreakdown';
 import { ExpiryTimer } from './ExpiryTimer';
-
-function getDecisionColor(decision: string): { bg: string; border: string; text: string; label: string } {
-  switch (decision) {
-    case 'approved':
-      return { bg: 'var(--green-bg)', border: 'var(--green-border)', text: 'var(--green)', label: 'Approved' };
-    case 'escalated':
-      return { bg: 'var(--yellow-bg)', border: 'var(--yellow-border)', text: 'var(--yellow)', label: 'Escalated' };
-    case 'blocked':
-      return { bg: 'var(--red-bg)', border: 'var(--red-border)', text: 'var(--red)', label: 'Blocked' };
-    default:
-      return { bg: 'var(--blue-bg)', border: 'var(--border-light)', text: 'var(--text-secondary)', label: decision };
-  }
-}
+import { DecisionGlyph } from './icons';
 
 function formatTimestamp(ts: string): string {
   const d = new Date(ts);
+  if (isNaN(d.getTime())) return ts;
   return d.toLocaleDateString('en-US', {
     month: 'short',
     day: 'numeric',
@@ -47,14 +36,10 @@ function parseTrigger(trigger: string): string {
   if (parts.length >= 3) {
     const [, area, ...details] = parts;
     const areaStr = area.replace(/_/g, ' ');
-    const detailStr = details.join(': ')
-      .replace(/->/g, ' → ')
-      .replace(/\+/g, ', ');
+    const detailStr = details.join(': ').replace(/->/g, ' → ').replace(/\+/g, ', ');
     return `${areaStr}: ${detailStr}`;
   }
-  if (parts.length >= 2) {
-    return parts[1].replace(/_/g, ' ');
-  }
+  if (parts.length >= 2) return parts[1].replace(/_/g, ' ');
   return trigger;
 }
 
@@ -63,117 +48,106 @@ interface TrustReceiptProps {
 }
 
 export function TrustReceipt({ data }: TrustReceiptProps) {
-  const style = getDecisionColor(data.decision);
+  const [showDetails, setShowDetails] = useState(false);
   const overallRisk = useMemo(() => computeOverallRisk(data.factor_scores), [data.factor_scores]);
   const isEscalated = data.decision === 'escalated';
+  const auditRef = `syn-${new Date(data.timestamp).getTime().toString(36)}`;
+  const hasDetails = Boolean(data.explanation || data.remediation || isEscalated);
 
   return (
-    <div className="receipt">
-      <div className="receipt-header">
-        <div className="receipt-brand">
-          <span className="receipt-logo">◆</span>
-          <span className="receipt-title">syn</span>
-        </div>
-        <span className="receipt-id">Trust Receipt</span>
-      </div>
+    <article className="receipt">
+      <header className="receipt-head">
+        <span className="receipt-tag">Trust Receipt</span>
+        <span className="receipt-ref mono">{auditRef}</span>
+      </header>
 
-      <div
-        className="decision-badge"
-        style={{ background: style.bg, borderColor: style.border, color: style.text }}
-      >
-        <span className="decision-icon">
-          {data.decision === 'approved' ? '✓' : data.decision === 'blocked' ? '✕' : '!'}
-        </span>
-        <span className="decision-label">{style.label}</span>
-      </div>
-      {data.simulation && (
-        <div
-          className="simulation-badge"
-        >
-          <span className="simulation-icon">◇</span>
-          <span>Simulation — No side effects</span>
+      <div className={`decision-hero is-${data.decision}`}>
+        <span className="decision-glyph"><DecisionGlyph decision={data.decision} /></span>
+        <div className="decision-text">
+          <span className="decision-label">Decision</span>
+          <span className="decision-word">{data.decision}</span>
         </div>
-      )}
+        {data.simulation && <span className="decision-sim">Simulation</span>}
+      </div>
 
       <div className="receipt-body">
-        <div className="receipt-section">
-          <div className="detail-row">
-            <span className="detail-label">Action</span>
-            <span className="detail-value mono">{data.action_type}</span>
+        {data.reason && (
+          <p className="reason-block" role="note">{data.reason}</p>
+        )}
+        <div className="kv-grid">
+          <div className="kv">
+            <span className="kv-key">Action</span>
+            <span className="kv-val mono">{data.action_type}</span>
           </div>
-          <div className="detail-row">
-            <span className="detail-label">Trigger</span>
-            <span className="detail-value mono trigger-text">{parseTrigger(data.trigger)}</span>
+          <div className="kv">
+            <span className="kv-key">Trigger</span>
+            <span className="kv-val mono trigger-text">{parseTrigger(data.trigger)}</span>
           </div>
           {data.regulatory_tier && (
-            <div className="detail-row">
-              <span className="detail-label">Regulatory</span>
-              <div className="badge-group">
-                <span className="badge badge-tier">{data.regulatory_tier.replace(/_/g, ' ')}</span>
+            <div className="kv">
+              <span className="kv-key">Regulatory</span>
+              <div className="chips">
+                <span className="chip chip-tier">{data.regulatory_tier.replace(/_/g, ' ')}</span>
                 {data.us_regime_flags.map(f => (
-                  <span key={f} className="badge badge-flag">{f}</span>
+                  <span key={f} className="chip chip-flag">{f}</span>
                 ))}
               </div>
             </div>
           )}
         </div>
 
-        <div className="receipt-section">
-          <div className="gauges-row">
-            <div className="gauge-col">
-              <RiskGauge score={overallRisk} label="Action Risk" size="lg" />
-            </div>
-            <div className="gauge-col">
-              <RiskGauge
-                score={Math.min(data.session_data.cumulative_severity, 100)}
-                label="Session Risk"
-                size="lg"
-              />
-            </div>
-          </div>
+        <div className="gauges">
+          <RiskGauge score={overallRisk} label="Action risk" size="lg" />
+          <RiskGauge
+            score={Math.min(data.session_data.cumulative_severity, 100)}
+            label="Session risk"
+            size="lg"
+          />
         </div>
 
-        <div className="receipt-section">
-          <FactorBreakdown scores={data.factor_scores} />
-        </div>
+        <FactorBreakdown scores={data.factor_scores} />
 
-        {data.explanation && (
-          <div className="receipt-section">
-            <h3 className="section-title">Explanation</h3>
-            <p className="explanation-text">{data.explanation}</p>
-          </div>
-        )}
-
-        {data.remediation && (
-          <div className="receipt-section">
-            <h3 className="section-title">Remediation</h3>
-            <p className="remediation-text">{data.remediation}</p>
-          </div>
-        )}
-
-        {isEscalated && (
-          <div className="receipt-section">
-            <h3 className="section-title">Rollback Plan</h3>
-            <p className="remediation-text">
-              {data.rollback_plan || 'Pending human review.'}
-            </p>
-            {data.expires_at && <ExpiryTimer expiresAt={data.expires_at} />}
+        {hasDetails && (
+          <div className="disclosure">
+            <button
+              className="disclosure-toggle"
+              onClick={() => setShowDetails(s => !s)}
+              aria-expanded={showDetails}
+            >
+              {showDetails ? 'Hide details' : 'Show details'}
+              <span className={`caret${showDetails ? ' open' : ''}`} aria-hidden="true">▾</span>
+            </button>
+            {showDetails && (
+              <div className="disclosure-body">
+                {data.explanation && (
+                  <section className="receipt-section">
+                    <h3 className="section-title">Explanation</h3>
+                    <p className="text-block">{data.explanation}</p>
+                  </section>
+                )}
+                {data.remediation && (
+                  <section className="receipt-section">
+                    <h3 className="section-title">Remediation</h3>
+                    <p className="text-block muted">{data.remediation}</p>
+                  </section>
+                )}
+                {isEscalated && (
+                  <section className="receipt-section">
+                    <h3 className="section-title">Rollback plan</h3>
+                    <p className="text-block muted">{data.rollback_plan || 'Pending human review.'}</p>
+                    {data.expires_at && <ExpiryTimer expiresAt={data.expires_at} />}
+                  </section>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>
 
-      <div className="receipt-footer">
-        <div className="footer-row">
-          <span className="footer-label">Timestamp</span>
-          <span className="footer-value mono">{formatTimestamp(data.timestamp)}</span>
-        </div>
-        <div className="footer-row">
-          <span className="footer-label">Audit Ref</span>
-          <span className="footer-value mono">
-            syn-{data.timestamp ? new Date(data.timestamp).getTime().toString(36) : Date.now().toString(36)}
-          </span>
-        </div>
-      </div>
-    </div>
+      <footer className="receipt-foot">
+        <span className="foot-key">Timestamp</span>
+        <span className="foot-val">{formatTimestamp(data.timestamp)}</span>
+      </footer>
+    </article>
   );
 }

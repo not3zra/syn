@@ -17,7 +17,7 @@ Branch `main` — working tree clean and up to date with `origin/main`. All core
 - **gateway/main.py** — FastAPI app; intercepts tool calls, routes to risk engine, serves the frontend API. `require_demo_token` dependency gates mutating/introspect routes (no-op unless `DEMO_TOKEN` set; refuses boot on Fly without it). `SYN_AUDIT_DB_PATH` relocates the SQLite audit DB; `SYN_ALLOW_ORIGINS` controls CORS; `SYN_TRUSTED_PROXY` switches the rate limiter to trust `X-Forwarded-For`.
 - **engine/** — six risk factors (severity, policy, anomaly, data_sensitivity, confidence, tool_trust), session scoring, decision tree, regulatory mapper, LLM client abstraction, AI Bootstrap, audit store, Slack notifier.
 - **frontend/** — React + Vite SPA (Trust Receipt + Bootstrap Review UIs). `App.tsx` randomizes `agent_id` per page load; `api.ts` attaches `X-Demo-Token` from `VITE_DEMO_TOKEN`.
-- **tests/** — unit, integration, gateway, live-verification, e2e smoke. `test_workflow.sh` is the end-to-end adversarial script (60 assertions passing).
+- **tests/** — unit, integration, gateway, live-verification, e2e smoke. `test_workflow.sh` is the end-to-end adversarial script (60 assertions passing). A realistic-usage scenario script, `scripts/syn_test_scenarios.py`, is planned (see *Pending work*) and is intentionally distinct from `test_workflow.sh`.
 
 ## Key config files
 
@@ -46,6 +46,38 @@ Default is **Fireworks** (`provider: fireworks`, model `accounts/fireworks/model
 - The `local-model` (AMD ROCm) container was scoped but not built.
 - Interactive Slack approve/deny (Block Kit) requires a Slack app with OAuth — webhook-only for now.
 - `test_e2e_smoke.py` / `test_live_api_verification.py` need a live server / live provider (expected).
+
+## Pending work — UI polish, explanation grounding, scenario script (branch `ui-product-identity`)
+
+Status: implemented and verified (uncommitted) on `ui-product-identity`. The prior UI redesign (teal product identity, two-pane inputs|receipt, Audit Timeline, placeholder logo) is committed there (not yet merged to `main`). All four work items are done:
+
+- `scripts/syn_test_scenarios.py` runs 19 assertions, all passing against a live gateway (real Fireworks LLM). Each scenario uses a unique per-run `agent_id` so sessions start clean.
+- Engine note: a *fresh* agent starts at **neutral** confidence (50), so `confidence_floor` only escalates when the agent has history in other tools but is new to this one — the script demonstrates this accurately (it is not a "first action always needs review" rule).
+- `reason` string threads through `severity`/`policy`/`data_sensitivity`/`confidence` (now `(score, reason)` tuples) → `evaluate.py` → `RiskEngineResult.reason` → `DecisionResponse` (gateway + frontend) → shown under the receipt's decision hero and in the timeline; `build_explanation_prompt`/`_get_mock_explanation` now ground the LLM explanation in `reason`.
+- Timeline refetches on every intercept (not just Reset) via `refreshNonce`. Right column is split into a scrolling `output-main` and a pinned `~42vh` timeline panel so the audit trail stays visible beside a tall receipt.
+
+### 1. Realistic scenario test script — `scripts/syn_test_scenarios.py`
+Distinct from `test_workflow.sh` (an adversarial/edge-case fuzz suite: unique agent per section, injection/422/XSS/proto-pollution tests, auto-managed server, `jq`). The new script is a **behavioral / realistic-usage** suite:
+- Python stdlib only (`urllib`); pure client against an already-running gateway (no server start, no DB wipe).
+- Persona-based, session-correlated: one persistent `agent_id` per scenario flow, so session pattern/cumulative scoring is exercised (unlike `test_workflow.sh`'s per-section agents).
+- Scenarios model plausible agent behavior: a finance agent (`finbot`) doing routine payments then a `check_balance → send_payment` fraud pair; a data agent (`dataops`) querying then deleting; a 3-step fraud chain; cumulative buildup; destructive `DROP`; unknown tool; close-out `GET /timeline` count.
+- Asserts `decision` + `trigger` + grounded `reason` + `regulatory_tier`/`us_regime_flags` + (escalated) `rollback_plan`/`expires_at`.
+- Run: `python scripts/syn_test_scenarios.py` (env `SYN_API_BASE` default `http://localhost:8000`, optional `DEMO_TOKEN`).
+
+### 2. Audit Timeline live update
+Timeline only refetches on mount and on Reset (its `refreshKey` = `resetNonce`). Fix: bump the nonce on successful intercept in `App.tsx` `handleSubmit` (rename `resetNonce`→`refreshNonce`; increment on both reset and intercept) so the trail updates without a page reload.
+
+### 3. Audit trail visibility
+Right column is one scrolling stack, so a tall receipt buries the timeline. Fix: split the column — wrap receipt/empty in `<div className="output-main">` and render `<Timeline>` as a sibling; `App.css` makes `.output` a flex column where `.output-main` scrolls and `.timeline-panel` is a fixed ~40vh region, keeping the trail visible beside a tall receipt.
+
+### 4. Grounded explanations (thread a `reason` through the engine)
+Explanations currently restate the scoring mechanism. Audit of the explain path:
+- `severity.py` returns `95.0` for invalid `send_payment` amount with no reason; `data_sensitivity_floor` has no mock-explanation branch (falls to generic weighted text); `confidence_floor` is generic.
+- Fix: `score_severity` / `score_data_sensitivity` / `score_confidence` return `(score, reason)` tuples naming the matched field/pattern or history count; `evaluate.py` sets `RiskEngineResult.reason` (add field in `models.py`) on the branch that produces the decision (session pair, severity/DS/confidence/policy floor); `gateway` + `frontend/types.ts` add `reason` to `DecisionResponse`; `TrustReceipt` shows it under the decision hero; `build_explanation_prompt` (`llm.py`) receives `reason` and instructs plain-language cause + fix (mock explanation uses it too). Applies the existing `session:pattern_matched` / `weighted_score:top_factor` standard to every trigger.
+
+### Verification
+- `python scripts/syn_test_scenarios.py` → realistic scenarios PASS; `reason` assertions validate #4.
+- `npm run lint` + `build` in `frontend/`; manual check: timeline updates on intercept without reload, stays visible under a tall receipt, receipt shows grounded `reason`.
 
 ## Current working tree
 
