@@ -2,15 +2,47 @@
 .app {
   display: grid;
   grid-template-rows: 58px minmax(0, 1fr);
-  grid-template-columns: 384px minmax(0, 1fr);
+  grid-template-columns: 384px minmax(0, 1fr) 372px;
   grid-template-areas:
-    'topbar topbar'
-    'composer output';
+    'topbar topbar topbar'
+    'composer output timeline';
   height: 100vh;
   background-color: var(--bg);
   background-image: var(--texture);
   background-size: 22px 22px;
   background-position: -11px -11px;
+}
+.timeline-col {
+  grid-area: timeline;
+  min-height: 0;
+  padding: 24px 24px 24px 0;
+  display: flex;
+  border-left: 1px solid var(--border);
+}
+
+/* ===== Themed scrollbars ===== */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
+}
+::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.22);
+  border-radius: 999px;
+  border: 3px solid var(--bg);
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--accent);
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
 .app--bootstrap {
   grid-template-columns: minmax(0, 1fr);
@@ -105,20 +137,22 @@
 }
 .output {
   grid-area: output;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  padding: 24px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   min-height: 0;
-  overflow: hidden;
+  padding: 24px;
 }
 .output-main {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 24px;
+}
+.output-inner {
+  max-width: 900px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
 }
 .output-main > * {
   max-width: 760px;
@@ -491,8 +525,8 @@
 
 /* ===== Audit Timeline ===== */
 .timeline-panel {
-  flex: 0 0 auto;
-  max-height: 42vh;
+  flex: 1 1 auto;
+  min-height: 0;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -542,7 +576,7 @@
   border-color: var(--accent-border);
   background: var(--accent-bg);
 }
-.panel-body { flex: 1; overflow-y: auto; padding: 14px; max-height: 380px; }
+.panel-body { flex: 1; overflow-y: auto; padding: 14px; min-height: 0; }
 
 .timeline { display: flex; flex-direction: column; }
 .timeline-item {
@@ -726,16 +760,17 @@
   .app,
   .app--bootstrap {
     grid-template-columns: 1fr;
-    grid-template-rows: 58px auto minmax(0, 1fr);
+    grid-template-rows: 58px auto auto minmax(0, 1fr);
     grid-template-areas:
       'topbar'
       'composer'
-      'output';
+      'output'
+      'timeline';
   }
   .composer-pane { max-height: 52vh; }
+  .timeline-col { border-left: none; border-top: 1px solid var(--border); padding: 16px; }
   .gauges { grid-template-columns: 1fr; }
 }
 @media (max-width: 560px) {
   .output { padding: 16px; }
-  .timeline-panel { max-height: 50vh; }
 }

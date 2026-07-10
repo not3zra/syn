@@ -11,8 +11,8 @@ import './App.css';
 
 const AGENT_ID = crypto.randomUUID();
 
-const PRESET_TOOLS: Record<string, Record<string, string>> = {
-  send_payment: { amount: '100', currency: 'USD', recipient: 'alice' },
+const PRESET_TOOLS: Record<string, Record<string, unknown>> = {
+  send_payment: { amount: 100, currency: 'USD', recipient: 'alice' },
   delete_file: { file_path: '/tmp/test.txt' },
   query_database: { query: 'SELECT * FROM users' },
 };
@@ -162,8 +162,10 @@ export default function App() {
               {error && <div className="error-msg">{error}</div>}
               {decision ? <TrustReceipt data={decision} /> : <EmptyState />}
             </div>
-            <Timeline refreshKey={refreshNonce} />
           </main>
+          <aside className="timeline-col">
+            <Timeline refreshKey={refreshNonce} />
+          </aside>
         </>
       ) : (
         <main className="output output--full">
