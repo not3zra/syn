@@ -313,6 +313,19 @@ class AuditStore:
             return None
         return dict(row)
 
+    def reset(self) -> dict[str, int]:
+        """Clear all demo state in place (no file deletion).
+
+        Empties the decisions, pending_rules, and sessions tables while
+        preserving the schema. Returns a count of cleared rows per table.
+        """
+        counts: dict[str, int] = {}
+        for table in ("decisions", "pending_rules", "sessions"):
+            cursor = self._conn.execute(f"DELETE FROM {table}")
+            counts[table] = cursor.rowcount
+        self._conn.commit()
+        return counts
+
     def list_all_pending_rules(self) -> list[dict[str, Any]]:
         rows = self._conn.execute(
             "SELECT * FROM pending_rules ORDER BY created_at ASC"

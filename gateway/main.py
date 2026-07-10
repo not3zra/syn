@@ -590,6 +590,30 @@ def list_timeline(outcome: str | None = Query(None)):
     return AUDIT_STORE.list_all(outcome=outcome)
 
 
+@app.post("/admin/reset", dependencies=[Depends(require_demo_token)])
+def admin_reset() -> dict[str, Any]:
+    """Reset the public demo to a clean slate without shell access.
+
+    Mirrors the manual `rm -f data/audit.db` + `printf 'tools: {}\\n' >
+    engine/policy_config.bootstrap.yaml` we run between judging sessions, but
+    done inside the live connection: it empties the audit store
+    (decisions + pending_rules + sessions) and restores the bootstrap
+    config to its baseline `tools: {}`. The merged-tools cache reloads on the
+    next request because the file mtime changes.
+
+    Token-gated (reuses #34's `require_demo_token` dependency).
+    """
+    cleared = AUDIT_STORE.reset()
+    # Restore the bootstrap baseline; bumping mtime triggers a merged-tools
+    # cache reload on the next _get_merged_tools() call.
+    write_policy_config("tools: {}\n", bootstrap_config_path)
+    return {
+        "success": True,
+        "cleared": cleared,
+        "bootstrap_baseline": "tools: {}",
+    }
+
+
 @app.post("/intercept", dependencies=[Depends(require_demo_token)])
 async def intercept(
     req: ToolCallRequest,
