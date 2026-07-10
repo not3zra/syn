@@ -62,7 +62,7 @@ The decision never leaves local code. The LLM (Fireworks or Groq, config-swappab
 
 18. As a platform engineer deploying the firewall, I want the entire system containerized with Docker from Day 1, so that I never hit a "works on my machine" problem during a deadline.
 
-19. As a platform engineer, I want the LLM provider abstracted behind a config-swappable interface, so that I can switch between providers (mock, Groq, Fireworks) by editing one line in `llm_config.yaml`.
+19. As a platform engineer, I want the LLM provider abstracted behind a config-swappable interface, so that I can switch between providers (mock, Groq, Fireworks, local) by editing one line in `llm_config.yaml`.
 
 20. [Implemented] As a platform engineer, I want a Fireworks cutoff policy: if Fireworks access is not confirmed by end of Day 3, the submission ships on the fallback provider with Fireworks calls pre-tested and ready to flip via config change.
 
@@ -96,7 +96,7 @@ The decision never leaves local code. The LLM (Fireworks or Groq, config-swappab
 
 ### LLM Provider Abstraction
 
-The LLM integration (explanation layer, AI Bootstrap) is built behind a swappable provider interface (abstract `LLMClient` class). A factory function reads `llm_config.yaml` to select the active provider. Three providers exist: `MockLLMClient` (testing), `FallbackLLMClient` (Groq), and `FireworksLLMClient` (Fireworks AI). The `generate(prompt, output_schema)` method handles both explanation prompts and bootstrap-rules generation (selected via `output_schema["type"]`).
+The LLM integration (explanation layer, AI Bootstrap) is built behind a swappable provider interface (abstract `LLMClient` class). A factory function reads `llm_config.yaml` to select the active provider. Four providers exist: `MockLLMClient` (testing), `FallbackLLMClient` (Groq / local OpenAI-compatible), and `FireworksLLMClient` (Fireworks AI). The `local` provider reuses `FallbackLLMClient` with configurable `base_url`, `api_key`, and `model` from environment variables. The `generate(prompt, output_schema)` method handles both explanation prompts and bootstrap-rules generation (selected via `output_schema["type"]`).
 
 For bootstrap generation, the client switches to a longer `max_tokens` limit (3000 vs 300 for explanations) and a different system prompt targeting security policy generation.
 
@@ -221,7 +221,7 @@ A good test asserts external behavior, not implementation details. It feeds inpu
 
 ## Further Notes
 
-- Two LLM providers are integrated: Groq (`llama-3.3-70b-versatile`) and Fireworks (`accounts/fireworks/models/glm-5p2`). Switch via `provider:` in `engine/llm_config.yaml`. Both require an API key in `.env`.
+- Three LLM providers are integrated: Groq (`llama-3.3-70b-versatile`), Fireworks (`accounts/fireworks/models/glm-5p2`), and local (any OpenAI-compatible endpoint like AMD Developer Cloud). Switch via `provider:` in `engine/llm_config.yaml`. Groq and Fireworks require an API key in `.env`; `local` reads `OPENAI_BASE_URL`, `OPENAI_API_KEY`, and `MODEL_NAME` from `.env`.
 - Groq free tier has a 100K token/day limit — switch to Fireworks for higher throughput during demo/rehearsal.
 - The demo flow has two parts: **Beat 4** (3× check_balance → send_payment, demonstrating session pattern matching) and **Bootstrap** (3 acts: fail-closed → introspect/approve → live enforcement). Total runtime ~4 minutes.
 - The sequence-of-actions correlation (agent-wide sliding time window, displayed via session grouping) is the primary differentiator and should be foregrounded in the pitch. The six-factor score and regulatory tagging are supporting depth.

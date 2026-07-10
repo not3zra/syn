@@ -1,9 +1,7 @@
-# Provider: mock | fallback | groq | fireworks
-provider: fireworks
-# Fireworks model (used when provider=fireworks):
-model: accounts/fireworks/models/glm-5p2
-# Groq model (used when provider=fallback or groq):
-# model: llama-3.3-70b-versatile
+# Provider: mock | fallback | groq | fireworks | local
+provider: local
+# Model override (used when provider=local; MODEL_NAME env var takes precedence):
+model: Qwen/Qwen3-8B
 # Timeout in seconds for LLM API calls (default: 15.0).
 # Bootstrap generation is token-heavy (~2500 tokens) and needs more time.
 timeout_seconds: 120.0

@@ -37,7 +37,7 @@ AI Agent / Client
 │  └─────────────┘ │
 │         │        │
 │  ┌─────────────┐ │
-│  │  llm.py      │ │  Mock / Groq / Fireworks (config-swappable)
+│  │  llm.py      │ │  Mock / Groq / Fireworks / Local (config-swappable)
 │  └─────────────┘ │
 │         │        │
 │  ┌─────────────┐ │
@@ -121,11 +121,14 @@ syn/
 │   └── audit.db              # SQLite audit database (gitignored)
 │
 ├── tests/
+│   ├── test_admin_reset.py
 │   ├── test_audit.py
 │   ├── test_bootstrap.py
+│   ├── test_demo_auth.py
 │   ├── test_docker.py
 │   ├── test_e2e_smoke.py
 │   ├── test_factors.py
+│   ├── test_frontend_demo_token.py
 │   ├── test_gateway.py
 │   ├── test_live_api_verification.py
 │   ├── test_llm.py
@@ -137,7 +140,8 @@ syn/
 └── docs/
     ├── prd.md                 # Product Requirements Document
     ├── decision-log.md        # Design decision log
-    └── project-reference.md   # This file
+    ├── project-reference.md   # This file
+    └── slide-deck.md          # Pitch presentation slide deck
 ```
 
 ---
@@ -161,6 +165,11 @@ cp .env.example .env
 # LLM provider — pick one:
 FIREWORKS_API_KEY="fw_..."
 GROQ_API_KEY="gsk_..."
+# Local / AMD Developer Cloud (any OpenAI-compatible endpoint):
+LLM_PROVIDER="local"
+OPENAI_BASE_URL="http://your-instance:8000/v1"
+OPENAI_API_KEY="EMPTY"
+MODEL_NAME="Qwen/Qwen3-8B"
 
 # Optional — Slack webhook for escalations:
 SYN_SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."
@@ -198,9 +207,9 @@ Other behaviors:
 Edit `engine/llm_config.yaml`:
 
 ```yaml
-# Options: mock | groq | fireworks  (default: fireworks)
-provider: fireworks
-model: accounts/fireworks/models/glm-5p2
+# Options: mock | groq | fireworks | local (default: fireworks)
+provider: local
+model: Qwen/Qwen3-8B
 ```
 
 | Provider | API Key Env Var | Free Tier |
@@ -208,6 +217,7 @@ model: accounts/fireworks/models/glm-5p2
 | `mock`   | None needed    | Unlimited |
 | `groq`   | `GROQ_API_KEY` | 100K tokens/day |
 | `fireworks` | `FIREWORKS_API_KEY` | Higher limits |
+| `local`  | `OPENAI_API_KEY` + `OPENAI_BASE_URL` | Any OpenAI-compatible endpoint (e.g., AMD Developer Cloud, local LLM) |
 
 ### Run with Docker
 

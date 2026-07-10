@@ -408,7 +408,7 @@ class FireworksLLMClient(FallbackLLMClient):
 
 
 def create_llm_client(config: dict[str, Any]) -> LLMClient:
-    provider = config.get("provider", "mock")
+    provider = os.environ.get("LLM_PROVIDER") or config.get("provider", "mock")
 
     if provider == "mock":
         return MockLLMClient()
@@ -439,6 +439,17 @@ def create_llm_client(config: dict[str, Any]) -> LLMClient:
             base_url=config.get("base_url", "https://api.fireworks.ai/inference/v1"),
             model=config.get("model", "accounts/fireworks/models/llama-v3p3-70b-instruct"),
             timeout_seconds=float(config.get("timeout_seconds", 15.0)),
+        )
+
+    if provider == "local":
+        key = os.environ.get("OPENAI_API_KEY", "EMPTY")
+        base_url = os.environ.get("OPENAI_BASE_URL", "http://localhost:8000/v1")
+        model = os.environ.get("MODEL_NAME", config.get("model", "Qwen/Qwen3-8B"))
+        return FallbackLLMClient(
+            api_key=key,
+            base_url=base_url,
+            model=model,
+            timeout_seconds=float(config.get("timeout_seconds", 120.0)),
         )
 
     raise ValueError(f"Unknown LLM provider: {provider}")
