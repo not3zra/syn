@@ -117,18 +117,8 @@
 .brandmark-box {
   display: grid;
   place-items: center;
-  border: 1.5px dashed var(--border-strong);
-  border-radius: 7px;
-  color: var(--ink-muted);
   flex-shrink: 0;
 }
-.brandmark-word {
-  font-weight: 600;
-  font-size: 15px;
-  letter-spacing: -0.02em;
-  color: var(--ink);
-}
-
 /* ===== Panes ===== */
 .composer-pane {
   grid-area: composer;
