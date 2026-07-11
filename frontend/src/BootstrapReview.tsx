@@ -383,7 +383,7 @@ export function BootstrapReview() {
   const errorCount = pendingRules.filter(r => r.status === 'error').length;
 
   return (
-    <div className="receipt" style={{ maxWidth: '720px' }}>
+    <div className="receipt">
       <div className="receipt-head">
         <div className="receipt-brand">
           <BrandMark size={18} />
