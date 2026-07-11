@@ -412,7 +412,7 @@ export function BootstrapReview() {
             </p>
             <div className="btn-row">
               <button className="btn btn-primary" onClick={handleIntrospect} disabled={loading}>
-                {loading ? 'Generating…' : 'Introspect tools'}
+                {loading ? <><span className="spinner" /> Generating…</> : 'Introspect tools'}
               </button>
               <button className="btn btn-ghost" onClick={() => setShowManualInput(o => !o)} disabled={loading}>
                 {showManualInput ? 'Cancel' : 'Manual JSON'}
@@ -431,7 +431,7 @@ export function BootstrapReview() {
                 />
                 <div className="btn-row" style={{ marginTop: 4 }}>
                   <button className="btn btn-primary btn-sm" onClick={handleManualSubmit} disabled={loading}>
-                    {loading ? 'Submitting…' : 'Submit schemas'}
+                    {loading ? <><span className="spinner" /> Submitting…</> : 'Submit schemas'}
                   </button>
                 </div>
               </div>
@@ -520,7 +520,7 @@ export function BootstrapReview() {
                   onClick={handleApprove}
                   disabled={loading || approved}
                 >
-                  {approved ? 'Approved ✓' : loading ? 'Writing…' : 'Approve and write config'}
+                  {approved ? 'Approved ✓' : loading ? <><span className="spinner" /> Writing…</> : 'Approve and write config'}
                 </button>
               </div>
 
@@ -535,7 +535,17 @@ export function BootstrapReview() {
           {loading && !result && <div className="skeleton">Generating security rules from tool schemas…</div>}
 
           {!result && !loading && !error && (
-            <div className="skeleton">Choose “Introspect tools” to auto-detect schemas, or “Manual JSON” to paste them.</div>
+            <div className="empty" style={{ border: '1px dashed var(--border)', maxWidth: 460, margin: '0 auto' }}>
+              <div className="empty-glyph">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ color: 'var(--ink-muted)' }}>
+                  <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+                </svg>
+              </div>
+              <h2 style={{ fontSize: 16, marginBottom: 6 }}>No rules generated yet</h2>
+              <p style={{ fontSize: 12.5, maxWidth: 380, margin: '0 auto', lineHeight: 1.5 }}>
+                Click <strong>Introspect tools</strong> to auto-detect schemas from the gateway, or use <strong>Manual JSON</strong> to paste a custom schema.
+              </p>
+            </div>
           )}
         </div>
       )}
@@ -553,7 +563,7 @@ export function BootstrapReview() {
             </div>
             {pendingCount > 0 && (
               <button className="btn btn-ghost btn-sm" onClick={handleApproveAll} disabled={actionLoading['_all']}>
-                {actionLoading['_all'] ? 'Approving…' : 'Approve all'}
+                {actionLoading['_all'] ? <><span className="spinner" /> Approving…</> : 'Approve all'}
               </button>
             )}
           </div>
@@ -609,7 +619,7 @@ export function BootstrapReview() {
                     onClick={() => handleRetry(rule)}
                     disabled={actionLoading[`retry_${rule.id}`]}
                   >
-                    {actionLoading[`retry_${rule.id}`] ? 'Retrying…' : 'Retry generation'}
+                    {actionLoading[`retry_${rule.id}`] ? <><span className="spinner" /> Retrying</> : 'Retry generation'}
                   </button>
                 ) : editingToolName === rule.tool_name ? (
                   <>
@@ -618,7 +628,7 @@ export function BootstrapReview() {
                       onClick={() => handleEditSave(rule.tool_name)}
                       disabled={actionLoading[`edit_${rule.tool_name}`]}
                     >
-                      {actionLoading[`edit_${rule.tool_name}`] ? 'Saving…' : 'Save'}
+                      {actionLoading[`edit_${rule.tool_name}`] ? <><span className="spinner" /> Saving</> : 'Save'}
                     </button>
                     <button
                       className="btn btn-ghost btn-sm"
@@ -634,7 +644,7 @@ export function BootstrapReview() {
                       onClick={() => handleApproveTool(rule.tool_name)}
                       disabled={actionLoading[rule.tool_name]}
                     >
-                      {actionLoading[rule.tool_name] ? '…' : 'Approve'}
+                      {actionLoading[rule.tool_name] ? <><span className="spinner" /> Approving</> : 'Approve'}
                     </button>
                     <button
                       className="btn btn-ghost btn-sm"
@@ -647,7 +657,7 @@ export function BootstrapReview() {
                       onClick={() => handleRejectTool(rule.tool_name)}
                       disabled={actionLoading[rule.tool_name]}
                     >
-                      Reject
+                      {actionLoading[rule.tool_name] ? <><span className="spinner" /> Rejecting</> : 'Reject'}
                     </button>
                   </>
                 )}

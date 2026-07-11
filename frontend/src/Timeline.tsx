@@ -75,7 +75,11 @@ export function Timeline({ refreshKey = 0 }: { refreshKey?: number }) {
       </header>
       <div className="panel-body">
         {loading ? (
-          <div className="skeleton">Loading audit history…</div>
+          <div className="skeleton" style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: 20 }}>
+            <div className="skel-line md" />
+            <div className="skel-line lg" />
+            <div className="skel-line md" style={{ width: '50%' }} />
+          </div>
         ) : visible.length === 0 ? (
           <div className="skeleton">No decisions yet. Intercept a tool call to begin the trail.</div>
         ) : (

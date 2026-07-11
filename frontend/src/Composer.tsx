@@ -6,6 +6,7 @@ interface ComposerProps {
   parameters: string;
   simulationMode: boolean;
   loading: boolean;
+  loadingTools?: boolean;
   onToolChange: (tool: string) => void;
   onParamsChange: (value: string) => void;
   onModeChange: (sim: boolean) => void;
@@ -18,11 +19,25 @@ export function Composer({
   parameters,
   simulationMode,
   loading,
+  loadingTools,
   onToolChange,
   onParamsChange,
   onModeChange,
   onSubmit,
 }: ComposerProps) {
+  if (loadingTools) {
+    return (
+      <section className="composer-skel" aria-label="Loading tools">
+        <div className="skel-line sm" />
+        <div className="skel-line md" />
+        <div className="skel-line lg" />
+        <div className="skel-line md" />
+        <div className="skel-line lg" style={{ height: 132, borderRadius: 'var(--radius-sm)' }} />
+        <div className="skel-line lg" />
+      </section>
+    );
+  }
+
   return (
     <section className="composer" aria-label="Intercept a tool call">
       <h2 className="composer-title">Intercept tool call</h2>
@@ -75,7 +90,7 @@ export function Composer({
       </div>
 
       <button type="button" className="btn btn-primary btn-block" onClick={onSubmit} disabled={loading}>
-        {loading ? 'Intercepting…' : 'Intercept tool call'}
+        {loading ? <><span className="spinner" /> Intercepting…</> : 'Intercept tool call'}
       </button>
     </section>
   );

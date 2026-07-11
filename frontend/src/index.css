@@ -66,7 +66,7 @@
   /* Type */
   --font-sans: 'Inter', -apple-system, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'JetBrains Mono', 'SF Mono', ui-monospace, Menlo, monospace;
-
+ 
   /* Motion */
   --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
   --dur: 0.22s;
@@ -115,5 +115,9 @@ button {
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
     scroll-behavior: auto !important;
+  }
+  .spinner {
+    animation-duration: 0.6s !important;
+    animation-iteration-count: infinite !important;
   }
 }
