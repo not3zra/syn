@@ -138,6 +138,7 @@ class TestMockLLMClient:
 class TestFactory:
     LLM_ENV_KEYS = [
         "LLM_PROVIDER", "LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL",
+        "LLM_MODEL_LOCAL", "LLM_MODEL_FIREWORKS", "LLM_MODEL_GROQ", "LLM_MODEL_OPENAI",
         "LLM_TIMEOUT", "LLM_MAX_RETRIES", "LLM_TEMPERATURE", "LLM_MAX_TOKENS",
         "OPENAI_API_KEY", "OPENAI_BASE_URL", "MODEL_NAME",
         "FIREWORKS_API_KEY", "GROQ_API_KEY",
@@ -176,7 +177,7 @@ class TestFactory:
         monkeypatch.setenv("LLM_API_KEY", "gsk-test")
         client = create_llm_client({"provider": "groq"})
         assert client.base_url == "https://api.groq.com/openai/v1"
-        assert client.model == "openai/gpt-oss-120b"
+        assert client.model == "llama-3.3-70b-versatile"
 
     def test_fireworks_defaults(self, monkeypatch):
         self._clean_llm_env(monkeypatch)
@@ -233,7 +234,7 @@ class TestFactory:
         client = create_llm_client({"provider": "fallback"})
         assert isinstance(client, OpenAIAPIClient)
         assert client.base_url == "https://api.groq.com/openai/v1"
-        assert client.model == "openai/gpt-oss-120b"
+        assert client.model == "llama-3.3-70b-versatile"
 
     def test_deprecated_env_vars_still_work(self, monkeypatch):
         self._clean_llm_env(monkeypatch)
@@ -388,6 +389,7 @@ class TestFactoryFallbackChain:
     def _clean_llm_env(self, monkeypatch):
         for key in [
             "LLM_PROVIDER", "LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL",
+            "LLM_MODEL_LOCAL", "LLM_MODEL_FIREWORKS", "LLM_MODEL_GROQ", "LLM_MODEL_OPENAI",
             "LLM_TIMEOUT", "LLM_MAX_RETRIES", "LLM_TEMPERATURE", "LLM_MAX_TOKENS",
             "OPENAI_API_KEY", "OPENAI_BASE_URL", "MODEL_NAME",
             "FIREWORKS_API_KEY", "GROQ_API_KEY",
@@ -424,3 +426,53 @@ class TestFactoryFallbackChain:
         client = create_llm_client({"provider": "groq"})
         assert not isinstance(client, FallbackLLMClient)
         assert isinstance(client, OpenAIAPIClient)
+
+    def test_fallback_path_honours_llm_provider_env(self, monkeypatch):
+        self._clean_llm_env(monkeypatch)
+        config = {
+            "provider": "local",
+            "fallback_providers": ["groq", "mock"],
+        }
+        monkeypatch.setenv("LLM_PROVIDER", "fireworks")
+        client = create_llm_client(config)
+        assert isinstance(client, FallbackLLMClient)
+        assert client.clients[0].provider == "fireworks"
+        assert client.clients[0].base_url == "https://api.fireworks.ai/inference/v1"
+
+    def test_fallback_chain_per_provider_models(self, monkeypatch):
+        self._clean_llm_env(monkeypatch)
+        config = {
+            "provider": "local",
+            "fallback_providers": ["fireworks", "groq", "mock"],
+        }
+        client = create_llm_client(config)
+        assert client.clients[0].provider == "local"
+        assert client.clients[0].model == "Qwen/Qwen3-8B"
+        assert client.clients[1].provider == "fireworks"
+        assert client.clients[1].model == "accounts/fireworks/models/glm-5p2"
+        assert client.clients[2].provider == "groq"
+        assert client.clients[2].model == "llama-3.3-70b-versatile"
+
+    def test_per_provider_model_env_override(self, monkeypatch):
+        self._clean_llm_env(monkeypatch)
+        monkeypatch.setenv("LLM_MODEL_FIREWORKS", "custom-fw-model")
+        monkeypatch.setenv("LLM_MODEL_GROQ", "custom-groq-model")
+        config = {
+            "provider": "local",
+            "fallback_providers": ["fireworks", "groq", "mock"],
+        }
+        client = create_llm_client(config)
+        assert client.clients[1].model == "custom-fw-model"
+        assert client.clients[2].model == "custom-groq-model"
+
+    def test_shared_model_env_overrides_all_providers(self, monkeypatch):
+        self._clean_llm_env(monkeypatch)
+        monkeypatch.setenv("LLM_MODEL", "shared-model")
+        config = {
+            "provider": "local",
+            "fallback_providers": ["fireworks", "groq", "mock"],
+        }
+        client = create_llm_client(config)
+        assert client.clients[0].model == "shared-model"
+        assert client.clients[1].model == "shared-model"
+        assert client.clients[2].model == "shared-model"

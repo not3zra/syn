@@ -123,7 +123,7 @@ PROVIDER_DEFAULTS: dict[str, ProviderConfig] = {
     "groq": ProviderConfig(
         name="groq",
         default_base_url="https://api.groq.com/openai/v1",
-        default_model="openai/gpt-oss-120b",
+        default_model="llama-3.3-70b-versatile",
     ),
     "openai": ProviderConfig(
         name="openai",
@@ -154,11 +154,13 @@ _PROVIDER_ENV_KEYS: dict[str, str] = {
 def create_llm_client(config: dict[str, Any]) -> LLMClient:
     fallback_providers = config.get("fallback_providers")
     if fallback_providers:
+        provider = os.environ.get("LLM_PROVIDER") or config.get("provider", "mock")
         clients: list[LLMClient] = [
-            _build_provider_client(config.get("provider", "mock"), config)
+            _build_provider_client(provider, config)
         ]
+        fallback_config = {k: v for k, v in config.items() if k != "model"}
         for name in fallback_providers:
-            clients.append(_build_provider_client(name, config))
+            clients.append(_build_provider_client(name, fallback_config))
         return FallbackLLMClient(clients)
 
     provider = os.environ.get("LLM_PROVIDER") or config.get("provider", "mock")
@@ -201,7 +203,8 @@ def _build_provider_client(provider: str, config: dict[str, Any]) -> LLMClient:
     )
 
     model = (
-        os.environ.get("LLM_MODEL")
+        os.environ.get(f"LLM_MODEL_{provider.upper()}")
+        or os.environ.get("LLM_MODEL")
         or _deprecated_env("MODEL_NAME", "LLM_MODEL")
         or config.get("model")
         or defaults.default_model
