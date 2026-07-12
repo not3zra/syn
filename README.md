@@ -2,6 +2,17 @@
   <img src="frontend/public/syn_logo_traced.svg" alt="syn logo" width="120" />
 </p>
 
+<p align="center">
+  <img src="https://img.shields.io/badge/python-3.11%2B-3776AB?style=flat&logo=python&logoColor=white" alt="Python 3.11+" />
+  <img src="https://img.shields.io/badge/FastAPI-0.115%2B-009688?style=flat&logo=fastapi&logoColor=white" alt="FastAPI" />
+  <img src="https://img.shields.io/badge/React-19-61DAFB?style=flat&logo=react&logoColor=white" alt="React 19" />
+  <img src="https://img.shields.io/badge/TypeScript-6-3178C6?style=flat&logo=typescript&logoColor=white" alt="TypeScript 6" />
+  <img src="https://img.shields.io/badge/Docker-2496ED?style=flat&logo=docker&logoColor=white" alt="Docker" />
+  <img src="https://img.shields.io/badge/license-MIT-yellow?style=flat" alt="MIT License" />
+  <img src="https://img.shields.io/badge/AMD_ACT_II-Unicorn_Track-ED1C24?style=flat&logo=amd&logoColor=white" alt="AMD ACT II Hackathon" />
+  <img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat" alt="PRs Welcome" />
+</p>
+
 # syn — AI Action Firewall
 
 **Deterministic, session-aware governance for AI agent tool calls.**
