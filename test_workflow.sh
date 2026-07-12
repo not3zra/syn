@@ -10,8 +10,11 @@ BASE="${1:-http://127.0.0.1:8000}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# Increase LLM timeout for bootstrap introspection which needs more time
+export LLM_TIMEOUT=120
+
 PASS=0; FAIL=0
-CURL="curl -s --max-time 45"
+CURL="curl -s --max-time 90"
 
 # --- clear state so the run is deterministic regardless of prior state ---
 rm -f data/audit.db 2>/dev/null
@@ -210,6 +213,9 @@ check "has expires_at" '.expires_at!=null' "$R"
 echo ""
 echo "=== 9b. Beat 4 pattern (fresh agent 'b4') ==="
 A="b4"
+# Warmup: build confidence for send_payment so confidence_floor doesn't fire first
+$CURL -X POST "$BASE/intercept" -H 'Content-Type: application/json' \
+  -d "{\"action_type\":\"send_payment\",\"parameters\":{\"amount\":1,\"recipient\":\"internal\"},\"agent_id\":\"$A\"}" >/dev/null
 for i in 1 2 3; do
   $CURL -X POST "$BASE/intercept" -H 'Content-Type: application/json' \
     -d "{\"action_type\":\"check_balance\",\"parameters\":{},\"agent_id\":\"$A\"}" >/dev/null
@@ -251,6 +257,9 @@ check "cross-type after query (may match pattern)" '.decision!=null' "$R"
 echo ""
 echo "=== 11. Pattern edge cases (fresh agent 'pe') ==="
 A="pe"
+# Warmup so send_payment confidence stays above floor
+$CURL -X POST "$BASE/intercept" -H 'Content-Type: application/json' \
+  -d "{\"action_type\":\"send_payment\",\"parameters\":{\"amount\":1,\"recipient\":\"internal\"},\"agent_id\":\"$A\"}" >/dev/null
 $CURL -X POST "$BASE/intercept" -H 'Content-Type: application/json' \
   -d "{\"action_type\":\"check_balance\",\"parameters\":{},\"agent_id\":\"$A\"}" >/dev/null
 $CURL -X POST "$BASE/intercept" -H 'Content-Type: application/json' \
@@ -259,6 +268,9 @@ R=$($CURL -X POST "$BASE/intercept" -H 'Content-Type: application/json' \
   -d "{\"action_type\":\"send_payment\",\"parameters\":{\"amount\":100,\"recipient\":\"alice\"},\"agent_id\":\"$A\"}")
 check "2/3 pattern (check_balance→send_payment triggers)" '.decision=="escalated"' "$R"
 
+# Warmup so send_payment confidence stays above floor
+$CURL -X POST "$BASE/intercept" -H 'Content-Type: application/json' \
+  -d "{\"action_type\":\"send_payment\",\"parameters\":{\"amount\":1,\"recipient\":\"internal\"},\"agent_id\":\"${A}_nm\"}" >/dev/null
 $CURL -X POST "$BASE/intercept" -H 'Content-Type: application/json' \
   -d "{\"action_type\":\"check_balance\",\"parameters\":{},\"agent_id\":\"${A}_nm\"}" >/dev/null
 $CURL -X POST "$BASE/intercept" -H 'Content-Type: application/json' \

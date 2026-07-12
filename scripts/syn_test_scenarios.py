@@ -189,8 +189,11 @@ def main() -> int:
 
     # ------------------------------------------------------------------ #
     # Recon-then-pay fraud pair → escalated as a recognised sequence.
+    # Warmup send_payment first so confidence_floor doesn't fire.
     # ------------------------------------------------------------------ #
     print("\n== Scenario: recon-then-pay fraud pair (fraud-recon) ==")
+    step(res, "fraud-recon", "send_payment", {"amount": 1, "recipient": "internal"},
+         "scenario-fraud-recon", {"escalated", "approved"})
     step(res, "fraud-recon", "check_balance", {}, "scenario-fraud-recon", {"escalated", "approved"})
     step(res, "fraud-recon", "send_payment", {"amount": 80, "currency": "USD", "recipient": "alice"},
          "scenario-fraud-recon", "escalated", trigger_sub="pattern_matched")

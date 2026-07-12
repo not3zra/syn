@@ -155,12 +155,12 @@ def create_llm_client(config: dict[str, Any]) -> LLMClient:
     fallback_providers = config.get("fallback_providers")
     if fallback_providers:
         provider = os.environ.get("LLM_PROVIDER") or config.get("provider", "mock")
+        stripped = {k: v for k, v in config.items() if k != "model"}
         clients: list[LLMClient] = [
-            _build_provider_client(provider, config)
+            _build_provider_client(provider, stripped)
         ]
-        fallback_config = {k: v for k, v in config.items() if k != "model"}
         for name in fallback_providers:
-            clients.append(_build_provider_client(name, fallback_config))
+            clients.append(_build_provider_client(name, stripped))
         return FallbackLLMClient(clients)
 
     provider = os.environ.get("LLM_PROVIDER") or config.get("provider", "mock")

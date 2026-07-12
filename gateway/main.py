@@ -459,6 +459,8 @@ def bootstrap_introspect(req: BootstrapIntrospectRequest):
                 {"name": name, "description": info["description"], "parameters": info["parameters"]}
                 for name, info in REGISTERED_TOOLS.items()
             ]
+        if not schemas:
+            return {"schemas": [], "rules": [], "yaml": "tools: {}", "valid": True, "errors": []}
         rules = generate_rules(LLM_CLIENT, schemas, domain_config=DOMAIN_CONFIG)
         if not rules:
             return {"error": "The LLM returned no rules. The generation may have timed out or the model produced an unexpected response. Please try again."}
@@ -526,6 +528,7 @@ def bootstrap_approve_tool(tool_name: str, req: ApproveToolRequest):
         "action_type": tool_name,
         "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "reviewed_by": req.reviewed_by,
+        "reason": f"Tool '{tool_name}' was manually approved via bootstrap review.",
     })
     return {"success": True, "tool_name": tool_name}
 
@@ -587,6 +590,7 @@ def bootstrap_approve_all(req: ApproveToolRequest):
             "action_type": rule["tool_name"],
             "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "reviewed_by": reviewed_by,
+            "reason": f"Tool '{rule['tool_name']}' was approved via bulk bootstrap review.",
         })
     return {"success": True, "approved_count": len(pending)}
 

@@ -148,9 +148,12 @@ class TestRiskEngineScenarios:
         assert data["decision"] == "escalated"
         assert data["trigger"] == "decision_tree:data_sensitivity_floor"
         explanation = data.get("explanation", "")
-        contributor_phrases = ["severity", "data_sensitivity", "tool_trust", "policy", "anomaly", "confidence"]
-        assert any(p in explanation for p in contributor_phrases), (
-            f"Explanation '{explanation}' does not name any contributing factor"
+        # LLM-generated explanations may use natural language; check for semantic content
+        assert any(
+            phrase in explanation.lower()
+            for phrase in ["data sensitivity", "sensitive", "customer", "threshold"]
+        ), (
+            f"Explanation '{explanation}' does not reference the data sensitivity factor"
         )
         assert data["rollback_plan"] is not None
         assert data["expires_at"] is not None
@@ -226,6 +229,18 @@ class TestRiskEngineScenarios:
     def test_session_pattern_match_escalated(self, server):
         base_url, _ = server
         agent_id = "risk-10"
+        # Warmup: build confidence for both tools so confidence_floor doesn't fire first
+        for _ in range(2):
+            resp = _post(base_url, "send_payment",
+                         {"amount": 10, "currency": "USD", "recipient": "internal"},
+                         agent_id=agent_id)
+            assert resp.status_code == 200
+        for _ in range(2):
+            resp = _post(base_url, "check_balance",
+                         {"account_id": "acc_123"},
+                         agent_id=agent_id)
+            assert resp.status_code == 200
+
         resp = _post(base_url, "check_balance",
                      {"account_id": "acc_123"},
                      agent_id=agent_id)
@@ -295,11 +310,12 @@ class TestGatewayEndpoints:
         resp = httpx.get(f"{base_url}/tools", timeout=10)
         assert resp.status_code == 200
         tools = resp.json()
-        assert len(tools) == 3
+        assert len(tools) == 4
         names = [t["name"] for t in tools]
         assert "send_payment" in names
         assert "delete_file" in names
         assert "query_database" in names
+        assert "check_balance" in names
 
     def test_health_endpoint(self, server):
         base_url, _ = server
@@ -338,6 +354,16 @@ class TestBeat4Sequence:
     def test_beat4_sequence(self, server):
         base_url, db_path = server
 
+        # Warmup: build confidence for both tools so confidence_floor doesn't fire first
+        resp = _post(base_url, "send_payment",
+                     {"amount": 1, "currency": "USD", "recipient": "internal"},
+                     agent_id=self.AGENT_ID)
+        assert resp.status_code == 200
+        resp = _post(base_url, "check_balance",
+                     {"account_id": "acc_123"},
+                     agent_id=self.AGENT_ID)
+        assert resp.status_code == 200
+
         for i in range(3):
             resp = _post(base_url, "check_balance",
                          {"account_id": "acc_123"},
@@ -361,7 +387,7 @@ class TestBeat4Sequence:
             f"Beat 4 trigger: expected session:pattern_matched:check_balance->send_payment, got {data['trigger']}"
         )
         assert data["session_data"]["pattern_matched"] is True
-        expected_cumulative = 3 * 15
+        expected_cumulative = 20 + 4 * 15
         assert data["session_data"]["cumulative_severity"] == expected_cumulative, (
             f"Beat 4 cumulative_severity: expected {expected_cumulative}, got {data['session_data']['cumulative_severity']}"
         )

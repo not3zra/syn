@@ -29,10 +29,11 @@ def test_lists_registered_tools():
     response = client.get("/tools")
     assert response.status_code == 200
     tools = response.json()
-    assert len(tools) == 3
+    assert len(tools) == 4
     names = [t["name"] for t in tools]
     assert "send_payment" in names
     assert "delete_file" in names
+    assert "check_balance" in names
     assert "query_database" in names
 
 

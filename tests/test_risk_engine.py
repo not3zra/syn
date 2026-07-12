@@ -129,10 +129,17 @@ def test_session_escalates_on_pattern_match():
     history = [
         {"action_type": "check_balance", "parameters": {"account_id": "acc_123"}, "severity": 15},
     ]
+    unbounded_history = [
+        {"action_type": "send_payment", "parameters": {"amount": 10}, "severity": 20},
+    ]
     result = evaluate(
         action_type="send_payment",
         parameters={"amount": 50, "currency": "USD", "recipient": "alice"},
-        session_context={"history": history, "session_id": "agent_1:1"},
+        session_context={
+            "history": history,
+            "unbounded_history": unbounded_history,
+            "session_id": "agent_1:1",
+        },
         config=CONFIG,
     )
     assert result.decision == Decision.ESCALATED
