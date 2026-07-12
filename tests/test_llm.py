@@ -6,11 +6,44 @@ from engine.llm import (
     LLMClient,
     MockLLMClient,
     OpenAIAPIClient,
+    FallbackLLMClient,
     create_llm_client,
     build_explanation_prompt,
     PROVIDER_DEFAULTS,
     LLMStatus,
 )
+
+
+class _RaisingClient(LLMClient):
+    def generate(self, prompt, output_schema=None):
+        raise RuntimeError("primary down")
+
+    def check_connection(self):
+        return LLMStatus(
+            healthy=False,
+            provider="raise",
+            model="m",
+            endpoint="e",
+            latency_ms=None,
+            checked_at=None,
+            message="down",
+        )
+
+
+class _OkClient(LLMClient):
+    def generate(self, prompt, output_schema=None):
+        return {"explanation": "ok", "remediation": "r"}
+
+    def check_connection(self):
+        return LLMStatus(
+            healthy=True,
+            provider="ok",
+            model="m",
+            endpoint="e",
+            latency_ms=1.0,
+            checked_at=None,
+            message="up",
+        )
 
 
 class TestPromptBuilder:
@@ -252,7 +285,7 @@ class TestOpenAIAPIClient:
         )
         assert client.timeout_seconds == 42.0
 
-    def test_fallback_to_mock_on_api_error(self):
+    def test_propagates_error_on_api_failure(self):
         client = OpenAIAPIClient(
             provider="local",
             api_key="bad-key",
@@ -262,9 +295,8 @@ class TestOpenAIAPIClient:
         prompt = build_explanation_prompt(
             "send_payment", "blocked", "severity_floor", {"severity": 95}
         )
-        result = client.generate(prompt)
-        assert "explanation" in result
-        assert isinstance(result["explanation"], str)
+        with pytest.raises(Exception):
+            client.generate(prompt)
 
     def test_ensure_client_creates_openai_client(self):
         client = OpenAIAPIClient(
@@ -325,3 +357,70 @@ class TestOpenAIAPICheckConnection:
         assert status.latency_ms is None
         assert status.checked_at is not None
         assert isinstance(status.message, str) and len(status.message) > 0
+
+
+class TestFallbackLLMClient:
+    def test_generate_falls_through_to_working_client(self):
+        chain = FallbackLLMClient([_RaisingClient(), _OkClient()])
+        result = chain.generate("some prompt")
+        assert result == {"explanation": "ok", "remediation": "r"}
+
+    def test_last_resort_used_without_throwing(self):
+        chain = FallbackLLMClient([_RaisingClient(), _RaisingClient(), MockLLMClient()])
+        result = chain.generate("some prompt")
+        assert "explanation" in result
+        assert isinstance(result["explanation"], str)
+
+    def test_check_connection_prefers_healthy_fallback(self):
+        chain = FallbackLLMClient([_RaisingClient(), _OkClient()])
+        status = chain.check_connection()
+        assert status.healthy is True
+        assert status.provider == "ok"
+
+    def test_check_connection_all_unhealthy_returns_last(self):
+        chain = FallbackLLMClient([_RaisingClient(), _RaisingClient()])
+        status = chain.check_connection()
+        assert status.healthy is False
+        assert status.provider == "raise"
+
+
+class TestFactoryFallbackChain:
+    def _clean_llm_env(self, monkeypatch):
+        for key in [
+            "LLM_PROVIDER", "LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL",
+            "LLM_TIMEOUT", "LLM_MAX_RETRIES", "LLM_TEMPERATURE", "LLM_MAX_TOKENS",
+            "OPENAI_API_KEY", "OPENAI_BASE_URL", "MODEL_NAME",
+            "FIREWORKS_API_KEY", "GROQ_API_KEY",
+        ]:
+            monkeypatch.delenv(key, raising=False)
+
+    def test_creates_fallback_chain_from_config(self, monkeypatch):
+        self._clean_llm_env(monkeypatch)
+        config = {
+            "provider": "groq",
+            "fallback_providers": ["mock"],
+        }
+        client = create_llm_client(config)
+        assert isinstance(client, FallbackLLMClient)
+        assert len(client.clients) == 2
+        assert isinstance(client.clients[0], OpenAIAPIClient)
+        assert isinstance(client.clients[1], MockLLMClient)
+
+    def test_fallback_chain_includes_all_providers(self, monkeypatch):
+        self._clean_llm_env(monkeypatch)
+        config = {
+            "provider": "fireworks",
+            "fallback_providers": ["groq", "mock"],
+        }
+        client = create_llm_client(config)
+        assert isinstance(client.clients[0], OpenAIAPIClient)
+        assert client.clients[0].provider == "fireworks"
+        assert isinstance(client.clients[1], OpenAIAPIClient)
+        assert client.clients[1].provider == "groq"
+        assert isinstance(client.clients[2], MockLLMClient)
+
+    def test_no_fallback_returns_single_client(self, monkeypatch):
+        self._clean_llm_env(monkeypatch)
+        client = create_llm_client({"provider": "groq"})
+        assert not isinstance(client, FallbackLLMClient)
+        assert isinstance(client, OpenAIAPIClient)

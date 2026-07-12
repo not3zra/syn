@@ -144,9 +144,28 @@ def _deprecated_env(old_name: str, new_name: str) -> str | None:
     return value
 
 
-def create_llm_client(config: dict[str, Any]) -> LLMClient:
-    provider = os.environ.get("LLM_PROVIDER") or config.get("provider", "mock")
+_PROVIDER_ENV_KEYS: dict[str, str] = {
+    "openai": "OPENAI_API_KEY",
+    "fireworks": "FIREWORKS_API_KEY",
+    "groq": "GROQ_API_KEY",
+}
 
+
+def create_llm_client(config: dict[str, Any]) -> LLMClient:
+    fallback_providers = config.get("fallback_providers")
+    if fallback_providers:
+        clients: list[LLMClient] = [
+            _build_provider_client(config.get("provider", "mock"), config)
+        ]
+        for name in fallback_providers:
+            clients.append(_build_provider_client(name, config))
+        return FallbackLLMClient(clients)
+
+    provider = os.environ.get("LLM_PROVIDER") or config.get("provider", "mock")
+    return _build_provider_client(provider, config)
+
+
+def _build_provider_client(provider: str, config: dict[str, Any]) -> LLMClient:
     if provider == "mock":
         return MockLLMClient()
 
@@ -163,8 +182,10 @@ def create_llm_client(config: dict[str, Any]) -> LLMClient:
 
     defaults = PROVIDER_DEFAULTS[provider]
 
+    provider_env_key = _PROVIDER_ENV_KEYS.get(provider)
     api_key = (
-        os.environ.get("LLM_API_KEY")
+        (os.environ.get(provider_env_key) if provider_env_key else None)
+        or os.environ.get("LLM_API_KEY")
         or _deprecated_env("OPENAI_API_KEY", "LLM_API_KEY")
         or _deprecated_env("FIREWORKS_API_KEY", "LLM_API_KEY")
         or _deprecated_env("GROQ_API_KEY", "LLM_API_KEY")
@@ -222,6 +243,34 @@ def create_llm_client(config: dict[str, Any]) -> LLMClient:
     )
 
 
+class FallbackLLMClient(LLMClient):
+    def __init__(self, clients: list[LLMClient]):
+        self.clients = clients
+
+    def generate(
+        self,
+        prompt: str,
+        output_schema: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        *head, last = self.clients
+        for client in head:
+            try:
+                return client.generate(prompt, output_schema)
+            except Exception:
+                continue
+        return last.generate(prompt, output_schema)
+
+    def check_connection(self) -> "LLMStatus":
+        last_status: LLMStatus | None = None
+        for client in self.clients:
+            status = client.check_connection()
+            if status.healthy:
+                return status
+            last_status = status
+        assert last_status is not None
+        return last_status
+
+
 class OpenAIAPIClient(LLMClient):
     def __init__(
         self,
@@ -255,10 +304,6 @@ class OpenAIAPIClient(LLMClient):
             max_retries=self.max_retries,
         )
 
-    def _fallback_to_mock(self, prompt: str) -> dict[str, Any]:
-        mock = MockLLMClient()
-        return mock.generate(prompt)
-
     def generate(
         self,
         prompt: str,
@@ -267,50 +312,44 @@ class OpenAIAPIClient(LLMClient):
         self._ensure_client()
 
         if output_schema and output_schema.get("type") == "bootstrap_rules":
-            try:
-                response = self._client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": BS_SYSTEM_PROMPT},
-                        {"role": "user", "content": prompt},
-                    ],
-                    response_format={"type": "json_object"},
-                    temperature=self.temperature,
-                    max_tokens=self.max_tokens,
-                )
-                text = response.choices[0].message.content or ""
-                result = _tolerant_json_parse(text)
-                if result is not None and isinstance(result.get("tools"), list):
-                    return {"tools": result["tools"]}
-                if result is not None and isinstance(result.get("tools"), dict):
-                    return {"tools": list(result["tools"].values())}
-                return {"tools": []}
-            except Exception:
-                return {"tools": []}
+            response = self._client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": BS_SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt},
+                ],
+                response_format={"type": "json_object"},
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+            )
+            text = response.choices[0].message.content or ""
+            result = _tolerant_json_parse(text)
+            if result is not None and isinstance(result.get("tools"), list):
+                return {"tools": result["tools"]}
+            if result is not None and isinstance(result.get("tools"), dict):
+                return {"tools": list(result["tools"].values())}
+            return {"tools": []}
 
         for attempt in range(2):
-            try:
-                sys_prompt = RETRY_SYSTEM_PROMPT if attempt == 1 else EXPLAIN_SYSTEM_PROMPT
-                response = self._client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": sys_prompt},
-                        {"role": "user", "content": prompt},
-                    ],
-                    response_format={"type": "json_object"},
-                    temperature=self.temperature,
-                    max_tokens=500,
-                )
-                text = response.choices[0].message.content or ""
-                result = _tolerant_json_parse(text)
-                if result is not None:
-                    explanation = result.get("explanation", "")
-                    remediation = result.get("remediation", "")
-                    if _has_leaked_reasoning(explanation) or _has_leaked_reasoning(remediation):
-                        continue
-                    return {"explanation": explanation, "remediation": remediation}
-            except Exception:
-                return self._fallback_to_mock(prompt)
+            sys_prompt = RETRY_SYSTEM_PROMPT if attempt == 1 else EXPLAIN_SYSTEM_PROMPT
+            response = self._client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": sys_prompt},
+                    {"role": "user", "content": prompt},
+                ],
+                response_format={"type": "json_object"},
+                temperature=self.temperature,
+                max_tokens=500,
+            )
+            text = response.choices[0].message.content or ""
+            result = _tolerant_json_parse(text)
+            if result is not None:
+                explanation = result.get("explanation", "")
+                remediation = result.get("remediation", "")
+                if _has_leaked_reasoning(explanation) or _has_leaked_reasoning(remediation):
+                    continue
+                return {"explanation": explanation, "remediation": remediation}
         return {
             "explanation": "This action was escalated for human review based on the governance policy. Please check the trigger and factor scores for details.",
             "remediation": "Contact your administrator for assistance.",
