@@ -2,6 +2,7 @@
 # All values can be overridden by LLM_PROVIDER, LLM_BASE_URL, LLM_API_KEY,
 # LLM_MODEL, LLM_TIMEOUT, and LLM_MAX_RETRIES environment variables.
 # Environment variables take precedence over this file.
-provider: local
-model: Qwen/Qwen3-8B
+provider: fireworks
+fallback_providers: ["groq", "mock"]
+model: accounts/fireworks/models/glm-5p2
 timeout_seconds: 120.0
