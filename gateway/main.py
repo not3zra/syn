@@ -19,7 +19,6 @@ from dotenv import load_dotenv
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 _request_id_var: ContextVar[str] = ContextVar("request_id", default="")
@@ -831,13 +830,3 @@ async def intercept(
             SLACK_NOTIFIER.send_escalation(resp.model_dump())
 
     return resp
-
-
-# ---------------------------------------------------------------------------
-# Serve frontend static build (if present).
-# In production (Docker) the dist is copied into the image; during local dev
-# the dir won't exist and the mount is skipped so the Vite dev proxy is used.
-# ---------------------------------------------------------------------------
-_frontend_dist = Path(__file__).resolve().parent.parent / "frontend" / "dist"
-if _frontend_dist.is_dir():
-    app.mount("/", StaticFiles(directory=str(_frontend_dist), html=True), name="frontend")
