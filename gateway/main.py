@@ -187,6 +187,15 @@ def assert_demo_token_configured_for_production() -> None:
 _last_llm_status: LLMStatus | None = None
 
 
+@app.exception_handler(Exception)
+async def _global_exception_handler(request: Request, exc: Exception):
+    logging.error("Unhandled exception on %s %s: %s", request.method, request.url.path, exc, exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+    )
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     global _last_llm_status
@@ -225,15 +234,27 @@ _rate_limiter = _RateLimiter(_RATE_LIMIT, _RATE_WINDOW)
 
 
 _ALLOW_ORIGINS = os.environ.get("SYN_ALLOW_ORIGINS", "*").split(",")
-# NOTE: credentials are disabled because origins are wildcard. Enabling
-# allow_credentials with "*" lets any website make credentialed
-# cross-origin requests. Re-enable only with a fixed allow_origins list.
+# Allow all Render frontend subdomains (cannot use wildcards for CORS with credentials)
+_render_origin = os.environ.get("FRONTEND_URL", "")
+if _render_origin and _render_origin not in _ALLOW_ORIGINS:
+    _ALLOW_ORIGINS.append(_render_origin)
+if "*" not in _ALLOW_ORIGINS:
+    logging.info("CORS allowed origins: %s", _ALLOW_ORIGINS)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_ALLOW_ORIGINS,
-    allow_credentials=False,
+    allow_credentials="*" not in _ALLOW_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
+)
+
+logging.info(
+    "Startup: CORS origins=%s, FRONTEND_URL=%s, DEMO_TOKEN=%s, PORT=%s",
+    _ALLOW_ORIGINS,
+    os.environ.get("FRONTEND_URL", "(not set)"),
+    "set" if os.environ.get("DEMO_TOKEN") else "not set",
+    os.environ.get("PORT", "8000"),
 )
 
 _MAX_BODY_SIZE = int(os.environ.get("SYN_MAX_BODY_SIZE", str(1024 * 1024)))  # default 1MB
