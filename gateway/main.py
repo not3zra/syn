@@ -419,6 +419,11 @@ def _background_bootstrap_generate(tool_name: str, parameters: dict):
             AUDIT_STORE.mark_pending_rule_error(fallback_pid, str(e))
 
 
+@app.get("/")
+def root():
+    return {"status": "ok", "service": "syn-gateway"}
+
+
 @app.get("/health")
 def health():
     if _last_llm_status is None:
