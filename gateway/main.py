@@ -187,15 +187,6 @@ def assert_demo_token_configured_for_production() -> None:
 _last_llm_status: LLMStatus | None = None
 
 
-@app.exception_handler(Exception)
-async def _global_exception_handler(request: Request, exc: Exception):
-    logging.error("Unhandled exception on %s %s: %s", request.method, request.url.path, exc, exc_info=True)
-    return JSONResponse(
-        status_code=500,
-        content={"detail": "Internal server error"},
-    )
-
-
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     global _last_llm_status
@@ -206,6 +197,15 @@ async def _lifespan(app: FastAPI):
 
 
 app = FastAPI(title="syn-gateway", lifespan=_lifespan)
+
+
+@app.exception_handler(Exception)
+async def _global_exception_handler(request: Request, exc: Exception):
+    logging.error("Unhandled exception on %s %s: %s", request.method, request.url.path, exc, exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+    )
 
 _THREAD_POOL = ThreadPoolExecutor(max_workers=4)
 
