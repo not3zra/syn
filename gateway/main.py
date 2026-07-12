@@ -17,7 +17,6 @@ from typing import Any
 import yaml
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -234,20 +233,10 @@ _rate_limiter = _RateLimiter(_RATE_LIMIT, _RATE_WINDOW)
 
 
 _ALLOW_ORIGINS = os.environ.get("SYN_ALLOW_ORIGINS", "*").split(",")
-# Allow all Render frontend subdomains (cannot use wildcards for CORS with credentials)
 _render_origin = os.environ.get("FRONTEND_URL", "")
 if _render_origin and _render_origin not in _ALLOW_ORIGINS:
     _ALLOW_ORIGINS.append(_render_origin)
-if "*" not in _ALLOW_ORIGINS:
-    logging.info("CORS allowed origins: %s", _ALLOW_ORIGINS)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_ALLOW_ORIGINS,
-    allow_credentials="*" not in _ALLOW_ORIGINS,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["*"],
-)
+_ALLOW_CREDENTIALS = "*" not in _ALLOW_ORIGINS
 
 logging.info(
     "Startup: CORS origins=%s, FRONTEND_URL=%s, DEMO_TOKEN=%s, PORT=%s",
@@ -261,6 +250,33 @@ _MAX_BODY_SIZE = int(os.environ.get("SYN_MAX_BODY_SIZE", str(1024 * 1024)))  # d
 
 
 _METHODS_WITH_BODY = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+@app.middleware("http")
+async def _cors_headers(request: Request, call_next):
+    origin = request.headers.get("origin", "")
+    if request.method == "OPTIONS":
+        if origin and ("*" in _ALLOW_ORIGINS or origin in _ALLOW_ORIGINS):
+            headers = {
+                "Access-Control-Allow-Origin": "*" if "*" in _ALLOW_ORIGINS else origin,
+                "Access-Control-Allow-Methods": "*",
+                "Access-Control-Allow-Headers": "*",
+                "Access-Control-Expose-Headers": "*",
+                "Access-Control-Max-Age": "86400",
+            }
+            if _ALLOW_CREDENTIALS:
+                headers["Access-Control-Allow-Credentials"] = "true"
+            return JSONResponse(status_code=204, content=None, headers=headers)
+    response = await call_next(request)
+    if origin:
+        if "*" in _ALLOW_ORIGINS or origin in _ALLOW_ORIGINS:
+            response.headers["Access-Control-Allow-Origin"] = "*" if "*" in _ALLOW_ORIGINS else origin
+            response.headers["Access-Control-Allow-Methods"] = "*"
+            response.headers["Access-Control-Allow-Headers"] = "*"
+            response.headers["Access-Control-Expose-Headers"] = "*"
+            if _ALLOW_CREDENTIALS:
+                response.headers["Access-Control-Allow-Credentials"] = "true"
+    return response
 
 
 @app.middleware("http")
