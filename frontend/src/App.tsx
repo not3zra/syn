@@ -15,6 +15,7 @@ const PRESET_TOOLS: Record<string, Record<string, unknown>> = {
   send_payment: { amount: 100, currency: "USD", recipient: "alice" },
   delete_file: { file_path: "/tmp/test.txt" },
   query_database: { query: "SELECT * FROM users" },
+  check_balance: { account_id: "123" },
 };
 
 function EmptyState() {

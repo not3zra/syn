@@ -74,6 +74,12 @@ REGISTERED_TOOLS: dict[str, dict[str, Any]] = {
             "query": {"type": "string", "description": "SQL query string"},
         },
     },
+    "check_balance": {
+        "description": "Check account balance",
+        "parameters": {
+            "account_id": {"type": "string", "description": "Account identifier"},
+        },
+    },
 }
 
 config_path = Path(__file__).resolve().parent.parent / "engine" / "policy_config.yaml"
