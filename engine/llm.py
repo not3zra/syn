@@ -261,7 +261,19 @@ class FallbackLLMClient(LLMClient):
                 return client.generate(prompt, output_schema)
             except Exception:
                 continue
-        return last.generate(prompt, output_schema)
+        try:
+            return last.generate(prompt, output_schema)
+        except Exception as e:
+            return {
+                "explanation": (
+                    f"All LLM providers failed to generate an explanation. "
+                    f"Last error: {e}"
+                ),
+                "remediation": (
+                    "The system is in a degraded state — no LLM provider is "
+                    "available. Please check provider health and try again."
+                ),
+            }
 
     def check_connection(self) -> "LLMStatus":
         last_status: LLMStatus | None = None
@@ -353,10 +365,9 @@ class OpenAIAPIClient(LLMClient):
                 if _has_leaked_reasoning(explanation) or _has_leaked_reasoning(remediation):
                     continue
                 return {"explanation": explanation, "remediation": remediation}
-        return {
-            "explanation": "This action was escalated for human review based on the governance policy. Please check the trigger and factor scores for details.",
-            "remediation": "Contact your administrator for assistance.",
-        }
+        raise RuntimeError(
+            "LLM failed to produce a valid explanation after 2 attempts"
+        )
 
     def check_connection(self) -> LLMStatus:
         t0 = time.monotonic()

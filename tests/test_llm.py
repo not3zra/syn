@@ -1,6 +1,7 @@
 import json
 
 import pytest
+from unittest.mock import MagicMock
 
 from engine.llm import (
     LLMClient,
@@ -286,6 +287,44 @@ class TestOpenAIAPIClient:
         )
         assert client.timeout_seconds == 42.0
 
+    def test_raises_runtime_error_on_garbage_content(self):
+        client = OpenAIAPIClient(
+            provider="local", api_key="key",
+            base_url="http://localhost:8000/v1", model="m",
+        )
+        mock_msg = MagicMock()
+        mock_msg.content = "this is not json at all"
+        mock_choice = MagicMock()
+        mock_choice.message = mock_msg
+        mock_resp = MagicMock()
+        mock_resp.choices = [mock_choice]
+        client._client = MagicMock()
+        client._client.chat.completions.create.return_value = mock_resp
+        prompt = build_explanation_prompt(
+            "send_payment", "blocked", "severity_floor", {"severity": 95}
+        )
+        with pytest.raises(RuntimeError, match="failed to produce a valid explanation"):
+            client.generate(prompt)
+
+    def test_raises_runtime_error_on_empty_content(self):
+        client = OpenAIAPIClient(
+            provider="local", api_key="key",
+            base_url="http://localhost:8000/v1", model="m",
+        )
+        mock_msg = MagicMock()
+        mock_msg.content = ""
+        mock_choice = MagicMock()
+        mock_choice.message = mock_msg
+        mock_resp = MagicMock()
+        mock_resp.choices = [mock_choice]
+        client._client = MagicMock()
+        client._client.chat.completions.create.return_value = mock_resp
+        prompt = build_explanation_prompt(
+            "send_payment", "blocked", "severity_floor", {"severity": 95}
+        )
+        with pytest.raises(RuntimeError, match="failed to produce a valid explanation"):
+            client.generate(prompt)
+
     def test_propagates_error_on_api_failure(self):
         client = OpenAIAPIClient(
             provider="local",
@@ -383,6 +422,23 @@ class TestFallbackLLMClient:
         status = chain.check_connection()
         assert status.healthy is False
         assert status.provider == "raise"
+
+    def test_garbage_content_falls_through_to_next_client(self):
+        bad_client = OpenAIAPIClient(
+            provider="local", api_key="key",
+            base_url="http://localhost:8000/v1", model="m",
+        )
+        mock_msg = MagicMock()
+        mock_msg.content = "not valid json whatsoever"
+        mock_choice = MagicMock()
+        mock_choice.message = mock_msg
+        mock_resp = MagicMock()
+        mock_resp.choices = [mock_choice]
+        bad_client._client = MagicMock()
+        bad_client._client.chat.completions.create.return_value = mock_resp
+        chain = FallbackLLMClient([bad_client, _OkClient()])
+        result = chain.generate("some prompt")
+        assert result == {"explanation": "ok", "remediation": "r"}
 
 
 class TestFactoryFallbackChain:
