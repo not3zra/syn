@@ -785,7 +785,7 @@ async def intercept(
             AUDIT_STORE.append(resp.model_dump(), session_id=session_id, agent_id=req.agent_id)
         if background_tasks and not is_simulation:
             background_tasks.add_task(_background_bootstrap_generate, req.action_type, req.parameters)
-    return resp
+        return resp
 
     eval_config = {**FULL_CONFIG, "tools": merged_tools}
     windowed_history = AUDIT_STORE.get_agent_recent_history(req.agent_id, window_minutes=30)
