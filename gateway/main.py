@@ -746,16 +746,6 @@ async def intercept(
             background_tasks.add_task(_background_bootstrap_generate, req.action_type, req.parameters)
     return resp
 
-
-# ---------------------------------------------------------------------------
-# Serve frontend static build (if present).
-# In production (Docker) the dist is copied into the image; during local dev
-# the dir won't exist and the mount is skipped so the Vite dev proxy is used.
-# ---------------------------------------------------------------------------
-_frontend_dist = Path(__file__).resolve().parent.parent / "frontend" / "dist"
-if _frontend_dist.is_dir():
-    app.mount("/", StaticFiles(directory=str(_frontend_dist), html=True), name="frontend")
-
     eval_config = {**FULL_CONFIG, "tools": merged_tools}
     windowed_history = AUDIT_STORE.get_agent_recent_history(req.agent_id, window_minutes=30)
     unbounded_history = AUDIT_STORE.get_agent_recent_history(req.agent_id, window_minutes=None)
@@ -841,3 +831,13 @@ if _frontend_dist.is_dir():
             SLACK_NOTIFIER.send_escalation(resp.model_dump())
 
     return resp
+
+
+# ---------------------------------------------------------------------------
+# Serve frontend static build (if present).
+# In production (Docker) the dist is copied into the image; during local dev
+# the dir won't exist and the mount is skipped so the Vite dev proxy is used.
+# ---------------------------------------------------------------------------
+_frontend_dist = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+if _frontend_dist.is_dir():
+    app.mount("/", StaticFiles(directory=str(_frontend_dist), html=True), name="frontend")
