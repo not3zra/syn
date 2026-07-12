@@ -80,19 +80,19 @@ def test_gated_routes_noop_when_token_unset(demo_token_unset):
 
 
 def test_prod_refuses_to_start_without_token(monkeypatch):
-    monkeypatch.setenv("FLY_APP_NAME", "syn")
+    monkeypatch.setenv("DEPLOY_ENV", "production")
     monkeypatch.delenv("DEMO_TOKEN", raising=False)
     with pytest.raises(RuntimeError):
         assert_demo_token_configured_for_production()
 
 
 def test_prod_ok_with_token(monkeypatch):
-    monkeypatch.setenv("FLY_APP_NAME", "syn")
+    monkeypatch.setenv("DEPLOY_ENV", "production")
     monkeypatch.setenv("DEMO_TOKEN", DEMO_TOKEN)
     assert_demo_token_configured_for_production()
 
 
 def test_local_no_fly_no_token_ok(monkeypatch):
-    monkeypatch.delenv("FLY_APP_NAME", raising=False)
+    monkeypatch.setenv("DEPLOY_ENV", "staging")
     monkeypatch.delenv("DEMO_TOKEN", raising=False)
     assert_demo_token_configured_for_production()

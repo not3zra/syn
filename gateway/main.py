@@ -19,6 +19,7 @@ from dotenv import load_dotenv
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 _request_id_var: ContextVar[str] = ContextVar("request_id", default="")
@@ -144,7 +145,7 @@ SLACK_NOTIFIER = SlackNotifier(webhook_url=SLACK_WEBHOOK_URL)
 # ---------------------------------------------------------------------------
 
 _DEMO_TOKEN_ENV = "DEMO_TOKEN"
-_FLY_APP_NAME_ENV = "FLY_APP_NAME"
+_DEPLOY_ENV_ENV = "DEPLOY_ENV"
 _DEMO_TOKEN_HEADER = "X-Demo-Token"
 
 
@@ -173,12 +174,12 @@ def require_demo_token(request: Request) -> None:
 def assert_demo_token_configured_for_production() -> None:
     """Fail loud in production when the tripwire token is missing.
 
-    On Fly (FLY_APP_NAME set) shipping without DEMO_TOKEN means the demo is
+    When DEPLOY_ENV=production, shipping without DEMO_TOKEN means the demo is
     open to anyone — refuse to start rather than deploy insecurely.
     """
-    if os.environ.get(_FLY_APP_NAME_ENV) and _expected_demo_token() is None:
+    if os.environ.get(_DEPLOY_ENV_ENV) == "production" and _expected_demo_token() is None:
         raise RuntimeError(
-            "DEMO_TOKEN must be set when running on Fly (FLY_APP_NAME is set). "
+            "DEMO_TOKEN must be set when DEPLOY_ENV=production. "
             "Refusing to start: the demo-token tripwire would be a no-op and the "
             "public demo would be unprotected."
         )
@@ -743,7 +744,17 @@ async def intercept(
             AUDIT_STORE.append(resp.model_dump(), session_id=session_id, agent_id=req.agent_id)
         if background_tasks and not is_simulation:
             background_tasks.add_task(_background_bootstrap_generate, req.action_type, req.parameters)
-        return resp
+    return resp
+
+
+# ---------------------------------------------------------------------------
+# Serve frontend static build (if present).
+# In production (Docker) the dist is copied into the image; during local dev
+# the dir won't exist and the mount is skipped so the Vite dev proxy is used.
+# ---------------------------------------------------------------------------
+_frontend_dist = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+if _frontend_dist.is_dir():
+    app.mount("/", StaticFiles(directory=str(_frontend_dist), html=True), name="frontend")
 
     eval_config = {**FULL_CONFIG, "tools": merged_tools}
     windowed_history = AUDIT_STORE.get_agent_recent_history(req.agent_id, window_minutes=30)
