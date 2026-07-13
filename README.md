@@ -180,8 +180,8 @@ Applied in **strict order** so critical violations can never be averaged away:
 ### Try It Live
 
 A public demo instance is deployed on Render:
-- **Frontend:** `https://syn.onrender.com`
-- **API:** `https://syn.onrender.com`
+- **Frontend:** `https://syn-frontend.onrender.com`
+- **API:** `https://syn-s9zg.onrender.com`
 
 > **Note:** The live demo uses randomized per-visit `agent_id` for cross-visit history isolation. For the full demo experience (session pattern matching across actions), run locally with a fixed `agent_id`.
 
