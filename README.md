@@ -49,17 +49,17 @@ Most governance tools score one action at a time. That misses sequences where in
 ## Architecture
 
 ```
-Agent / Client
-    │
-    │ POST /intercept
-    ▼
-                     ┌──────────────────────┐
-                     │  Qwen on ROCm         │
-                     │  (AMD Developer Cloud)│
-                     │  anomaly reasoning    │
-                     └──────────┬───────────┘
-                                │ feeds the anomaly factor
-                                ▼
+      Agent / Client
+          │
+          │ POST /intercept
+          ▼
+┌──────────────────────┐
+│  Qwen on ROCm         │
+│  (AMD Developer Cloud)│
+│  anomaly reasoning    │
+└──────────┬───────────┘
+           │ feeds the anomaly factor
+           ▼
 ┌─────────────────────┐
 │  FastAPI Gateway     │  (port 8000)
 │                      │
