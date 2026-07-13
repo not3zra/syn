@@ -9,7 +9,15 @@ import { ResetGlyph } from "./icons";
 import { API_BASE, apiFetch } from "./api";
 import "./App.css";
 
-const AGENT_ID = crypto.randomUUID();
+function _loadAgentId(): string {
+  const stored = localStorage.getItem("syn_agent_id");
+  if (stored) return stored;
+  const id = crypto.randomUUID();
+  localStorage.setItem("syn_agent_id", id);
+  return id;
+}
+
+const AGENT_ID = _loadAgentId();
 
 const PRESET_TOOLS: Record<string, Record<string, unknown>> = {
   send_payment: { amount: 100, currency: "USD", recipient: "alice" },

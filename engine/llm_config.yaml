@@ -3,6 +3,6 @@
 # LLM_MODEL, LLM_TIMEOUT, and LLM_MAX_RETRIES environment variables.
 # Environment variables take precedence over this file.
 provider: local
-fallback_providers: ["fireworks", "groq", "mock"]
+fallback_providers: ["groq", "mock"]
 model: Qwen/Qwen3-8B
 timeout_seconds: 120.0

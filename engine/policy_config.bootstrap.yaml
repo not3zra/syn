@@ -1,1 +1,26 @@
-tools: {}
+tools:
+  unknown_tool_xyz:
+    anomaly_lookback: 5
+    data_sensitivity_rules:
+    - field: '*'
+      pattern: .*
+      score: 100
+    policy_rules:
+    - condition:
+        field: tool_name
+        operator: equals
+        value: unknown_tool_xyz
+      description: Unknown tool with no declared parameters must be blocked from invocation
+        in production financial environments
+      score: 95
+    - condition:
+        field: tool_trust_tier
+        operator: equals
+        value: unknown
+      description: Unknown tools must not be allowed to access customer PII or payment
+        systems under GDPR and EU AI Act obligations
+      score: 90
+    severity_rules:
+    - query_type: any
+      score: 90
+    tool_trust_tier: unknown
