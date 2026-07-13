@@ -11,6 +11,7 @@
   <img src="https://img.shields.io/badge/license-MIT-yellow?style=flat" alt="MIT License" />
   <img src="https://img.shields.io/badge/AMD_ACT_II-Unicorn_Track-ED1C24?style=flat&logo=amd&logoColor=white" alt="AMD ACT II Hackathon" />
   <img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat" alt="PRs Welcome" />
+  <a href="https://syn-frontend.onrender.com"><img src="https://img.shields.io/badge/Try%20it%20live-Render-46E3B7?style=flat&logo=render&logoColor=white" alt="Try it live on Render" /></a>
 </p>
 
 # syn — AI Action Firewall
@@ -22,6 +23,8 @@ syn sits between an AI agent and the tools it calls, intercepting every action a
 The LLM **never** makes or influences decisions. It only generates explanations from abstracted numeric scores.
 
 **Project reference:** AMD ACT II Hackathon, Unicorn Track · Submitted July 13, 2026
+
+**Built by:** [@not3zra](https://github.com/not3zra) & [@Lumine8](https://github.com/Lumine8)
 
 ---
 
@@ -96,11 +99,26 @@ Most governance tools score one action at a time. That misses sequences where in
 
 The decision never leaves the machine. The anomaly factor is computed by Qwen, served locally on AMD Developer Cloud via ROCm — real local GPU inference contributing to the actual decision, not just a required-stack checkbox. Fireworks (or whichever LLM provider is configured for explanations) only ever receives abstracted numeric scores after the decision is already made — never raw action content, amounts, recipients, or file paths.
 
+<p align="center">
+  <!-- Screenshot placeholder: Trust Receipt UI showing an escalated decision with session-pattern trigger -->
+  <img src="docs/assets/receipt-escalated.png" alt="Trust Receipt — escalated decision with session-pattern trigger" width="720" />
+  <br/>
+  <em>Trust Receipt: every decision shows the exact deterministic trigger, six-factor breakdown, session risk gauge, and AI explanation.</em>
+</p>
+
 ---
 
 ## Decision Pipeline
 
 Applied in **strict order** so critical violations can never be averaged away:
+
+<div align="center">
+  <!-- Screenshot placeholders: Bootstrap Review UI (two halves of a tall/scrolled page) -->
+  <img src="docs/assets/bootstrap-review-top.png" alt="AI Bootstrap — generated rules and diff view (top)" width="49%" style="display:inline-block;vertical-align:top" />
+  <img src="docs/assets/bootstrap-review-bottom.png" alt="AI Bootstrap — pending approvals tab (bottom)" width="49%" style="display:inline-block;vertical-align:top" />
+  <br/>
+  <em>AI Bootstrap: auto-generates security policy from tool schemas, reviewed and approved in one click.</em>
+</div>
 
 ### 1. Decision Tree Floors
 | Condition | Result |
@@ -159,6 +177,14 @@ Applied in **strict order** so critical violations can never be averaged away:
 
 ## Quick Start
 
+### Try It Live
+
+A public demo instance is deployed on Render:
+- **Frontend:** `https://syn.onrender.com`
+- **API:** `https://syn.onrender.com`
+
+> **Note:** The live demo uses randomized per-visit `agent_id` for cross-visit history isolation. For the full demo experience (session pattern matching across actions), run locally with a fixed `agent_id`.
+
 ### Prerequisites
 - Python ≥ 3.11, Node.js, or Docker
 
@@ -172,12 +198,13 @@ docker compose up --build
 ### Local (backend)
 ```bash
 cp .env.example .env
-python -m venv venv
-venv\Scripts\activate     # Windows
-# source venv/bin/activate  # Linux/Mac
-pip install -r requirements.txt
-uvicorn gateway.main:app --host 0.0.0.0 --port 8000
+uv venv
+source .venv/bin/activate
+uv pip install -e .
+uv run uvicorn gateway.main:app --host 0.0.0.0 --port 8000
 ```
+
+> **Note:** This project uses `uv` for package management. Install it via `pip install uv` or your system package manager.
 
 ### Local (frontend)
 ```bash
@@ -188,7 +215,7 @@ npm run dev
 
 ### Tests
 ```bash
-pytest tests/ -v
+uv run pytest tests/ -v
 ```
 
 ### Environment Variables
@@ -301,12 +328,47 @@ syn is a small, fully legible implementation of that governance layer: determini
 
 ```
 syn/
-├── docker-compose.yml
-├── gateway/              # FastAPI app: health, intercept, bootstrap, resolve, timeline
-├── engine/               # Risk factors, decision tree, session logic, LLM client, audit store
-├── frontend/             # React + Vite + TypeScript UI
-├── tests/                # pytest suite
-└── docs/                 # PRD, decision log, project reference
+├── docker-compose.yml          # Gateway + Frontend containers
+├── pyproject.toml              # Python deps (uv)
+├── .env.example                # Env var template
+│
+├── gateway/                    # FastAPI server
+│   ├── main.py                 # Routes: intercept, bootstrap, resolve, health, admin
+│   └── Dockerfile
+│
+├── engine/                     # Risk engine (pure Python)
+│   ├── evaluate.py             # Orchestrator
+│   ├── decision_tree.py        # Hard floors + weighted blend
+│   ├── session.py              # Pattern matching, cumulative severity
+│   ├── severity.py             # Factor scorers
+│   ├── policy.py
+│   ├── anomaly.py
+│   ├── data_sensitivity.py
+│   ├── confidence.py
+│   ├── tool_trust.py
+│   ├── regulatory.py           # EU AI Act + US regime flags
+│   ├── llm.py                  # Provider abstraction (Fireworks, Groq, etc.)
+│   ├── bootstrap.py            # AI auto-config
+│   ├── audit.py                # SQLite store
+│   ├── slack.py                # Escalation notifications
+│   └── *.yaml                  # Config files (policy, sequences, regulatory, LLM)
+│
+├── frontend/                   # React 19 + Vite + TypeScript + nginx
+│   ├── src/
+│   │   ├── TrustReceipt.tsx     # Decision result UI
+│   │   ├── BootstrapReview.tsx  # AI Bootstrap workflow
+│   │   ├── Timeline.tsx         # Audit trail explorer
+│   │   ├── RiskGauge.tsx        # Visual risk gauge
+│   │   └── ...
+│   └── Dockerfile
+│
+├── tests/                      # pytest suite (15 files)
+│   ├── test_risk_engine.py     # Full decision flow
+│   ├── test_factors.py         # All 6 risk factors
+│   ├── test_gateway.py         # HTTP API, CORS, rate limits
+│   └── ...
+│
+└── docs/                       # PRD, decision log, slide deck, demo script
 ```
 
 ---

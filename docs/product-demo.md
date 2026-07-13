@@ -11,9 +11,8 @@
 docker compose up --build
 
 # Reset state for a clean demo
-curl -X POST http://localhost:8000/admin/reset \
-  -H "Content-Type: application/json" \
-  -d '{"token": "demo-token-xyz"}'
+# (no DEMO_TOKEN set locally → the check is a no-op on local dev)
+curl -X POST http://localhost:8000/admin/reset
 ```
 
 Frontend: `http://localhost:3000`
@@ -283,8 +282,6 @@ Revisit any receipt from the timeline. Point out the regulatory badge:
 
 ### Reset for re-demo
 ```bash
-curl -X POST http://localhost:8000/admin/reset \
-  -H "Content-Type: application/json" \
-  -d '{"token": "demo-token-xyz"}'
+curl -X POST http://localhost:8000/admin/reset
 ```
 This clears all audit log entries, pending rules, and resets `policy_config.bootstrap.yaml` to `tools: {}`.
