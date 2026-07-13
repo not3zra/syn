@@ -21,7 +21,18 @@ syn sits between an AI agent and the tools it calls, intercepting every action a
 
 The LLM **never** makes or influences decisions. It only generates explanations from abstracted numeric scores.
 
-**Project reference:** AMD ACT II Hackathon, Unicorn Track · Submission deadline July 11, 2026, 15:00 UTC
+**Project reference:** AMD ACT II Hackathon, Unicorn Track · Submitted July 13, 2026
+
+---
+
+## AMD Infrastructure Usage
+
+This project uses AMD-approved compute in two distinct places, not just as a checkbox:
+
+- **Local inference on AMD Developer Cloud, via ROCm.** The anomaly-detection factor — one of the six risk factors below — is scored by a Qwen model served locally on an AMD Developer Cloud GPU instance using ROCm. This is real local inference contributing to the actual risk decision, not a demo-only integration. If the local model is ever unavailable, the system falls back to a statistical z-score scorer so the pipeline never has a single point of failure.
+- **Fireworks AI (hosted on AMD hardware) for explanation and remediation.** After the deterministic engine reaches a decision, Fireworks generates the plain-English explanation and remediation text shown in the Trust Receipt UI. Fireworks never sees raw action content — only abstracted numeric scores (see [Privacy-preserving by design](#design-decisions) below) — and never influences the decision itself.
+
+**Where to look in the code:** `engine/anomaly.py` (local model + statistical fallback), `engine/llm.py` (Fireworks client), `engine/llm_config.yaml` (provider config — set `provider: fireworks` for the judged/demo configuration; `mock`/`groq` are for local development only, to avoid burning API quota while iterating).
 
 ---
 
@@ -127,6 +138,22 @@ Applied in **strict order** so critical violations can never be averaged away:
 - **Audit trail** — SQLite-backed timeline with outcome filtering
 - **Slack notifications** — escalated actions posted to Slack with a rollback plan
 - **Dockerized** — two containers (gateway + frontend), one `docker compose up`
+
+---
+
+## Where to Look
+
+| What | File |
+|---|---|
+| Risk engine orchestration | `engine/evaluate.py` |
+| Decision tree floors + session branches + weighted blend | `engine/decision_tree.py` |
+| Session pattern matching | `engine/session.py` |
+| Anomaly factor (local Qwen model + statistical fallback) | `engine/anomaly.py` |
+| Regulatory tier mapping | `engine/regulatory.py`, `engine/regulatory_mapping.yaml` |
+| Fireworks / LLM client (explanations only) | `engine/llm.py`, `engine/llm_config.yaml` |
+| Gateway API (intercept, bootstrap, resolve, timeline) | `gateway/main.py` |
+| Audit trail | `engine/audit.py` |
+| Trust Receipt UI | `frontend/src/TrustReceipt.tsx` |
 
 ---
 
