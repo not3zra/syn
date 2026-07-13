@@ -18,7 +18,6 @@ import yaml
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 _request_id_var: ContextVar[str] = ContextVar("request_id", default="")
@@ -873,8 +872,3 @@ async def intercept(
             SLACK_NOTIFIER.send_escalation(resp.model_dump())
 
     return resp
-
-
-FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
-if FRONTEND_DIST.is_dir():
-    app.mount("/", StaticFiles(directory=str(FRONTEND_DIST), html=True), name="frontend")
